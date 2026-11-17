@@ -1,4 +1,6 @@
 import { createAccessTokenVerifier } from './auth/tokens.js'
+import { registerCatalogRoutes } from './catalog/routes.js'
+import { registerGuestSessionRoutes } from './session/routes.js'
 import { createApp } from './app.js'
 import { loadConfig } from './config.js'
 import { createDatabase } from './db/pool.js'
@@ -27,7 +29,15 @@ const database = createDatabase({
 const accessTokens = createAccessTokenVerifier({
   supabaseUrl: config.supabaseUrl,
 })
-const app = createApp(config, { logger, database, accessTokens })
+const app = createApp(config, {
+  logger,
+  database,
+  accessTokens,
+  registerRoutes(router) {
+    registerCatalogRoutes(router, { database })
+    registerGuestSessionRoutes(router, { nodeEnv: config.nodeEnv })
+  },
+})
 const server = app.listen(config.port, () => {
   logger.info(`API listening on port ${config.port}`)
 })

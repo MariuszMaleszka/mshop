@@ -1,6 +1,6 @@
 # Kontrakty REST API — wersja robocza
 
-Zaimplementowane są `GET /api/v1/health` i `GET /api/v1/health/ready`. Pozostałe endpointy w tym dokumencie są planowane. Nie są jeszcze dostępne w Express.
+Zaimplementowane są `GET /api/v1/health`, `GET /api/v1/health/ready`, publiczny odczyt aktywnych kategorii i produktów oraz `POST /api/v1/session/guest`. Pozostałe endpointy w tym dokumencie są planowane. Nie są jeszcze dostępne w Express.
 
 ## 1. Konwencje
 - Prefix: `/api/v1`
@@ -113,10 +113,59 @@ Błąd odczytu roli z PostgreSQL:
 Odpowiedź 503 nie zawiera SQL, nazw tabel ani szczegółów połączenia. Nie oznacza braku uprawnień.
 
 ## 4. Publiczny katalog
-Planowane:
-- `GET /products` — lista aktywnych produktów; filtry i paginacja.
-- `GET /products/:slug` — szczegóły aktywnego produktu.
-- `GET /categories` — lista aktywnych kategorii.
+Endpointy są publiczne. Nie wymagają `Authorization`. Zwracają tylko rekordy z `is_active = true`. Brak rekordu i rekord nieaktywny dają ten sam HTTP 404 `NOT_FOUND`. Niepoprawne UUID, `page`, `limit` albo `product_type` dają HTTP 400 `VALIDATION_ERROR`.
+
+- `GET /api/v1/categories` — lista aktywnych kategorii. Query: `page`, `limit`. Sortowanie: `sort_order`, `name`, `id`.
+- `GET /api/v1/categories/:id` — aktywna kategoria po UUID.
+- `GET /api/v1/products` — lista aktywnych produktów. Query: `page`, `limit`, opcjonalnie `category_id` (UUID) i `product_type` (`physical`, `digital`, `service`). Sortowanie: `name`, `id`.
+- `GET /api/v1/products/:id` — aktywny produkt po UUID.
+
+Pola kategorii: `id`, `name`, `slug`, `description`, `sort_order`.
+
+Pola produktu: `id`, `category_id`, `name`, `slug`, `description`, `product_type`, `sku`, `price_amount`, `currency`, `tax_status`, `vat_rate`, `stock_quantity`.
+
+W szczegółach produktu `category_id` jest `null`, gdy powiązana kategoria nie jest aktywna. Lista produktów zostawia zapisany `category_id`. Relacja w bazie nie jest zmieniana.
+
+Lista:
+
+```json
+{
+  "data": [
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "name": "Prints",
+      "slug": "prints",
+      "description": "Paper",
+      "sort_order": 1
+    }
+  ],
+  "meta": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+}
+```
+
+Szczegóły:
+
+```json
+{
+  "data": {
+    "id": "44444444-4444-4444-8444-444444444444",
+    "category_id": null,
+    "name": "Session",
+    "slug": "session",
+    "description": "Portrait",
+    "product_type": "service",
+    "sku": null,
+    "price_amount": 12900,
+    "currency": "PLN",
+    "tax_status": "standard",
+    "vat_rate": 23,
+    "stock_quantity": null
+  },
+  "meta": {}
+}
+```
+
+`GET /api/v1/products/:slug` nie jest zaimplementowany.
 
 ## 5. Konto i klient
 Planowane. Supabase Auth ma obsługiwać rejestrację, logowanie, OAuth i odzyskiwanie hasła. Express ma udostępniać:
@@ -129,6 +178,21 @@ Planowane. Supabase Auth ma obsługiwać rejestrację, logowanie, OAuth i odzysk
 - `DELETE /customers/me/addresses/:id` — usunięcie własnego adresu rozliczeniowego.
 
 Adresu dostawy na MVP nie ma. Telefon kontaktowy należy do klienta, nie do profilu konta.
+
+## Sesja gościa
+`POST /api/v1/session/guest` jest publiczny. Nie wymaga `Authorization` i nie czyta identyfikatora z body. Tworzy albo odświeża ciasteczko `shop_guest_session`.
+
+Odpowiedź:
+
+```json
+{ "data": { "authenticated": false }, "meta": {} }
+```
+
+Ciasteczko jest `HttpOnly`, `SameSite=Lax`, `Path=/`, bez `Domain`, z czasem życia 30 dni. W produkcji ma atrybut `Secure`. Wartość to 64 znaki hex z 32 losowych bajtów. Brak ciasteczka albo niepoprawny format powoduje nowe losowanie. Poprawna wartość zostaje, a czas życia jest ustawiany od nowa.
+
+Surowy identyfikator jest tylko w ciasteczku. SHA-256 tego identyfikatora, zapisany jako 64 znaki hex, będzie jedyną postacią w przyszłym koszyku i w `carts.session_id`. Ten endpoint nie tworzy wiersza koszyka i nie zwraca identyfikatora ani skrótu.
+
+Żądanie z Nuxt do API jest cross-origin. Przeglądarka zapisze i odeśle ciasteczko dopiero wtedy, gdy klient wyśle `credentials: 'include'`, a API doda `Access-Control-Allow-Credentials`. Obecny CORS tego nie włącza.
 
 ## 6. Koszyk
 Planowane:

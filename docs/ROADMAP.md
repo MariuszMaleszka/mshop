@@ -86,9 +86,11 @@ Acceptance:
 - testy dostępu do własnych zasobów.
 
 ## Phase 5 — Catalog
-- [ ] Publiczna lista produktów.
+Publiczny odczyt aktywnych kategorii i produktów jest ukończony. Zapis, panel administratora i zdjęcia nie są rozpoczęte.
+
+- [x] Publiczna lista produktów.
 - [ ] Szczegóły produktu po slug.
-- [ ] Kategorie.
+- [x] Publiczne kategorie oraz szczegóły kategorii i produktu po UUID.
 - [ ] Admin CRUD produktów.
 - [ ] Admin CRUD kategorii.
 - [ ] Upload zdjęć do Supabase Storage.
@@ -101,6 +103,9 @@ Acceptance:
 - pliki mają prawidłowe uprawnienia.
 
 ## Phase 6 — Cart & checkout
+Ciasteczko sesji gościa jest ukończone. Koszyk, łączenie z kontem i checkout nie są rozpoczęte.
+
+- [x] Ustawiać ciasteczko `shop_guest_session` i liczyć skrót SHA-256. Wiersz `carts` jeszcze nie powstaje.
 - [ ] Koszyk gościa identyfikowany ciasteczkiem `httpOnly`; w bazie tylko skrót sekretu.
 - [ ] Koszyk zalogowanego klienta i jeden aktywny koszyk na właściciela.
 - [ ] Połączenie koszyka gościa z koszykiem konta po zalogowaniu.

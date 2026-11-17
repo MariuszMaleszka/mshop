@@ -49,7 +49,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check. Logik
 
 Katalog, dane klienta, koszyk, zamówienia i płatności mają być odczytywane przez Express. RLS jest dodatkową warstwą, bo klucz `anon` i tak jest w przeglądarce przy Supabase Auth. Nie zastępuje weryfikacji tokenu ani sprawdzenia właściciela i roli. Połączenie `pg` używa roli z `DATABASE_URL`. Na lokalnej bazie jest to zwykle `postgres`, które omija RLS tak samo jak `service_role`. Dlatego każde przyszłe zapytanie o zasób użytkownika musi mieć warunek właściciela w Express. Osobnej roli bazy o węższych uprawnieniach jeszcze nie ma: wymagałaby migracji i nadania praw do istniejących tabel. Sekretu `service_role` nie wolno umieszczać we frontendzie.
 
-Nie używaj bezpośredniego zapisu z przeglądarki do tabel `orders`, `order_items`, `payments`, `payment_events`, `idempotency_keys`, `user_roles` ani do operacji administracyjnych. Koszyk gościa jest identyfikowany ciasteczkiem `httpOnly`; surowy identyfikator sesji nie trafia do bazy.
+Nie używaj bezpośredniego zapisu z przeglądarki do tabel `orders`, `order_items`, `payments`, `payment_events`, `idempotency_keys`, `user_roles` ani do operacji administracyjnych. Koszyk gościa będzie identyfikowany ciasteczkiem `httpOnly` `shop_guest_session`. Surowy identyfikator nie trafia do bazy, logów ani JSON. W bazie zostanie skrót SHA-256.
 
 `idempotency_keys` i `payment_events` to dwa mechanizmy. Klucz idempotencji dotyczy powtórzonego żądania HTTP wybranych operacji `POST` i nie służy webhookom. Zdarzenie płatności dotyczy webhooka operatora albo ręcznego potwierdzenia gotówki. Webhook nie wysyła nagłówka `Idempotency-Key`.
 
@@ -84,12 +84,12 @@ shop/
 
 ## 5. Moduły domenowe backendu
 
-Poniższy podział jest docelowy. Poza health checkiem moduły nie są jeszcze zaimplementowane.
+Poniższy podział jest docelowy. Zaimplementowany jest publiczny odczyt katalogu. Pozostałe moduły nie są jeszcze zaimplementowane.
 
 - `auth`: weryfikacja tożsamości i kontekst użytkownika; bez implementowania własnego systemu haseł.
 - `customers`: profile, typ klienta, adresy.
-- `catalog`: produkty, usługi, kategorie, media.
-- `cart`: koszyk i pozycje koszyka.
+- `catalog`: publiczny odczyt aktywnych kategorii i produktów przez `pg`. Zapytania jawnie filtrują `is_active = true`, bo rola z `DATABASE_URL` może omijać RLS. Szczegóły są po UUID. Nieaktywna kategoria nie zmienia wiersza produktu; w odpowiedzi szczegółów `category_id` jest wtedy `null`. Zapis, media i panel administratora nie są zaimplementowane.
+- `cart`: koszyk nie jest jeszcze zaimplementowany. Sesja gościa to ciasteczko `shop_guest_session` ustawiane wyłącznie przez `POST /api/v1/session/guest`. Surowy identyfikator zostaje w ciasteczku. Przyszły zapis użyje tylko `hashGuestSessionId`, czyli SHA-256 tej wartości.
 - `checkout`: walidacja danych i utworzenie zamówienia.
 - `orders`: odczyt, statusy i historia zamówień.
 - `payments`: inicjowanie płatności, webhooki, zwroty i rejestrowanie zdarzeń w `payment_events`. Powtórzenia żądań HTTP obsługuje `idempotency_keys`, nie ta tabela.
