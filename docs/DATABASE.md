@@ -8,7 +8,7 @@ Dokument opisuje zaakceptowany schemat PostgreSQL. Nie jest migracją. Źródłe
 - Klucze główne: `uuid`, domyślnie `gen_random_uuid()`, poza `profiles.id` i singletonem `shop_profile`.
 - Czas: `timestamptz` w UTC. `created_at` na każdej tabeli. `updated_at` tam, gdzie wiersz wolno zmieniać; ustawia go trigger.
 - Kwoty: `bigint` w najmniejszej jednostce waluty. Dla PLN są to grosze. Zakaz `float` i `real`.
-- Waluta: `char(3)`, kod alfabetyczny ISO 4217. Domyślnie `PLN`. Check formatu `^[A-Z]{3}$`. Brak checka ograniczającego wartość do `PLN`.
+- Waluta: `char(3)`, kod alfabetyczny ISO 4217. Check formatu `^[A-Z]{3}$`. Brak checka ograniczającego wartość do `PLN`, więc schemat nie wyklucza późniejszego `EUR` ani `USD`. `products.currency` i `carts.currency` mają domyślnie `PLN`. `orders`, `order_items` i `payments` nie mają domyślnej waluty.
 - Na MVP Express przyjmuje wyłącznie `PLN`. Kursów i przeliczania nie ma.
 - `price_amount` produktu jest kwotą należną za sztukę. Przy sprzedawcy `registered` i `tax_status = standard` jest to cena brutto z VAT. W pozostałych przypadkach jest to cała kwota do zapłaty, bez wyliczania sztucznego podatku.
 - Tabele dopisywane (`order_status_history`, `payment_events`, `idempotency_keys`) nie mają `updated_at`.
@@ -63,6 +63,8 @@ Zakup nie wymaga rejestracji. Gość ma `user_id = null` i nowy wiersz przy chec
 
 ### `customer_addresses`
 
+Jeszcze bez migracji. Poniższy opis zostaje uzgodnionym modelem książki adresów.
+
 Książka adresów zalogowanego klienta. Na MVP tylko adres rozliczeniowy. Adresu dostawy nie ma.
 
 - `id uuid PK`
@@ -98,6 +100,8 @@ Migracja wstawia jeden wiersz ze statusem `unknown`.
 - `unknown` — status nieustalony; checkout jest zablokowany i zamówienie nie powstaje
 
 ### `store_settings`
+
+Jeszcze bez migracji. Status podatkowy sprzedawcy jest w `shop_profile`, nie tutaj.
 
 Ustawienia niefiskalne, na przykład nazwa sklepu i e-mail kontaktowy.
 
@@ -154,6 +158,8 @@ Null w `vat_rate` sam nie oznacza zwolnienia. Lista stawek 23, 8 i 5 nie jest ch
 Stan magazynowy nie zależy od typu produktu. Usługa i produkt cyfrowy nie muszą go mieć. Zaawansowanego magazynu nie ma.
 
 ### `product_images`
+
+Jeszcze bez migracji. Poniższy opis zostaje uzgodnionym modelem zdjęć produktu.
 
 - `id uuid PK`
 - `product_id uuid not null references products(id) on delete cascade`
@@ -214,7 +220,7 @@ Checkout jest jedną transakcją. Przy `shop_profile.seller_tax_status = unknown
 
 Express sprawdza, że każdy produkt koszyka ma tę samą walutę co koszyk. Na MVP ta waluta musi być `PLN`. Do zamówienia i płatności trafia kod z tej chwili. Później się nie zmienia.
 
-Dla `standard`, przy sprzedawcy `registered`: podatek jest różnicą brutto i netto, zaokrąglaną połową w górę do grosza, osobno na każdej pozycji, na liczbach całkowitych. Dla `zero_rated`, `exempt` i `not_subject` podatek wynosi 0, a netto równa się brutto. Stawki nie wyciąga się wtedy z ceny.
+Dla `standard`, przy sprzedawcy `registered`: podatek jest różnicą brutto i netto, zaokrąglaną połową w górę do grosza, osobno na każdej pozycji, na liczbach całkowitych. Dla `zero_rated`, `exempt` i `not_subject` podatek wynosi 0, a netto równa się brutto. Stawki nie wyciąga się wtedy z ceny. Schemat nie liczy VAT. Dokładny wzór na liczbach całkowitych ustala się przed implementacją checkoutu.
 
 Gdy sprzedawca jest `exempt`, zastosowany status każdej pozycji to `exempt`, zastosowana stawka jest null, podatek wynosi 0, a netto równa się brutto. Snapshot katalogowy zostaje taki, jaki był na produkcie.
 
@@ -232,7 +238,7 @@ Sumy nagłówka równają się sumom pozycji. Sprawdza to transakcja checkoutu, 
 - `customer_type text not null` — `individual` lub `company`
 - `billing_snapshot jsonb not null`
 - `seller_tax_status_snapshot text not null` — tylko `registered` albo `exempt`
-- `currency char(3) not null`
+- `currency char(3) not null` — bez wartości domyślnej; check `^[A-Z]{3}$`
 - `net_amount bigint not null`
 - `tax_amount bigint not null`
 - `gross_amount bigint not null`
@@ -242,7 +248,9 @@ Sumy nagłówka równają się sumom pozycji. Sprawdza to transakcja checkoutu, 
 - `created_at timestamptz not null`
 - `updated_at timestamptz not null`
 
-`gross_amount = net_amount + tax_amount`. Wszystkie trzy kwoty są nieujemne. `gross_amount` jest kwotą przekazywaną operatorowi płatności.
+`gross_amount = net_amount + tax_amount`. Wszystkie trzy kwoty są nieujemne. `gross_amount` jest kwotą przekazywaną operatorowi płatności. Nie ma kolumny `orders.status`.
+
+Na `orders` są dwa klucze unikalne obok `order_number`: `(id, currency)` oraz `(id, payment_method, currency, gross_amount)`. Służą kluczom obcym pozycji i płatności. Nie zastępują klucza głównego.
 
 `billing_snapshot` zawiera wyłącznie dane z chwili zakupu: `first_name`, `last_name`, `company_name`, `nip`, `phone`, `recipient`, `street`, `building_number`, `apartment_number`, `postal_code`, `city`, `country_code`. Kształt sprawdza Express.
 
@@ -257,12 +265,12 @@ Te osie są niezależne. Baza nie wymusza kolejności między nimi.
 Każda pozycja ma snapshot katalogowy i snapshot użyty do kwot. Przy sprzedawcy zwolnionym produkt może mieć katalogowo `standard` i stawkę 23, a pozycja i tak jest liczona jako `exempt` ze stawką null.
 
 - `id uuid PK`
-- `order_id uuid not null references orders(id) on delete cascade`
+- `order_id uuid not null`
 - `product_id uuid null references products(id) on delete set null`
 - `product_name_snapshot text not null`
 - `product_type_snapshot text not null`
 - `sku_snapshot text null`
-- `currency char(3) not null` — ten sam kod co `orders.currency`
+- `currency char(3) not null` — bez wartości domyślnej; ten sam kod co `orders.currency`
 - `catalog_tax_status_snapshot text not null`
 - `catalog_vat_rate_snapshot numeric(5,2) null`
 - `tax_status_snapshot text not null`
@@ -283,7 +291,7 @@ Checki pozycji:
 
 Dla `standard` podatek nie musi być większy od zera. Zaokrąglenie bardzo małej kwoty może dać zero.
 
-Późniejsza zmiana produktu, jego ceny, waluty albo stawki nie zmienia pozycji.
+Zgodność waluty pozycji z zamówieniem wymusza klucz obcy `(order_id, currency)` → `orders (id, currency)` z `on delete cascade`. Usunięcie produktu zeruje `product_id` i zostawia snapshot. Późniejsza zmiana produktu, jego ceny, waluty albo stawki nie zmienia pozycji.
 
 ### `order_status_history`
 
@@ -306,78 +314,112 @@ Operator nie jest wybrany. Model przyjmuje gotówkę oraz jednego operatora onli
 
 Webhook jest źródłem prawdy dla płatności online. Powrót przeglądarki na stronę sukcesu nie ustawia `paid`. Przed `paid` Express sprawdza podpis, kwotę, walutę, zamówienie i status.
 
-`payments.amount` równa się `orders.gross_amount` w chwili utworzenia. `payments.currency` równa się `orders.currency`. Obu pól waluty i kwoty należnej nie zmieniamy po utworzeniu. Zmiana katalogu ich nie przelicza.
+`payments.amount` równa się `orders.gross_amount`, `payments.currency` równa się `orders.currency`, a `payments.method` równa się `orders.payment_method`. Wymusza to klucz obcy `(order_id, method, currency, amount)` → `orders (id, payment_method, currency, gross_amount)` z `on delete restrict`. Po utworzeniu tych pól nie zmieniamy. Zmiana katalogu ich nie przelicza. Nie ma triggera, który kopiuje `payments.status` do `orders.payment_status`.
+
+Jedna próba to jeden wiersz. Kolejna próba po `failed`, `cancelled` albo `refunded` jest nowym wierszem. Częściowy zwrot nie zwalnia miejsca na następną aktywną próbę.
 
 ### `payments`
 
 - `id uuid PK`
-- `order_id uuid not null references orders(id) on delete restrict`
+- `order_id uuid not null`
 - `method text not null` — `online` albo `cash`
 - `provider text null` — `przelewy24` albo `stripe`, gdy `method = online`; null dla gotówki
-- `provider_transaction_id text null`
+- `provider_transaction_id text null` — przy gotówce też null; przy online może być null, dopóki operator nie nada identyfikatora
 - `status text not null` — ten sam zestaw co `orders.payment_status`; domyślnie `pending`
-- `amount bigint not null`
-- `refunded_amount bigint not null` — domyślnie `0`; check `<= amount`
-- `currency char(3) not null`
+- `amount bigint not null` — check `>= 0`
+- `refunded_amount bigint not null` — domyślnie `0`; check `>= 0` i `<= amount`
+- `currency char(3) not null` — bez wartości domyślnej; check `^[A-Z]{3}$`
 - `paid_at timestamptz null`
 - `created_at timestamptz not null`
 - `updated_at timestamptz not null`
 
-`cancelled` oznacza płatność, która nie doszła do skutku. Po `paid` zwrot całkowity to `refunded`, a częściowy to `partially_refunded`. Nowa próba po `failed` albo `cancelled` jest nowym wierszem.
+`updated_at` ustawia istniejąca funkcja `set_updated_at`.
 
-Najwyżej jedna płatność `pending` i najwyżej jedna `paid` na zamówienie. Para (`provider`, `provider_transaction_id`) jest unikalna, gdy identyfikator nie jest null.
+Check wiąże status z `paid_at` i `refunded_amount`:
+
+| Status | `paid_at` | `refunded_amount` |
+|---|---|---|
+| `pending`, `failed`, `cancelled` | null | `0` |
+| `paid` | wymagany | `0` |
+| `partially_refunded` | wymagany | większy od 0 i mniejszy od `amount` |
+| `refunded` | wymagany | równy `amount` |
+
+Przy `amount = 0` częściowy zwrot jest niemożliwy. Pełny zwrot zera jest dozwolony.
+
+`cancelled` oznacza płatność, która nie doszła do skutku. Po `paid` zwrot całkowity to `refunded`, a częściowy to `partially_refunded`.
+
+Najwyżej jedna aktywna płatność na zamówienie. Aktywne statusy to `pending`, `paid` i `partially_refunded`. `failed`, `cancelled` i `refunded` nie blokują kolejnej próby. Para (`provider`, `provider_transaction_id`) jest unikalna, gdy identyfikator nie jest null.
 
 ### `payment_events`
 
+Osobny mechanizm od `idempotency_keys`. Zdarzenie zapisuje webhook albo ręczne potwierdzenie gotówki. Nie zabezpiecza powtórzonego `POST` klienta.
+
 - `id uuid PK`
 - `payment_id uuid not null references payments(id) on delete cascade`
-- `provider text not null` — operator albo `manual` dla gotówki
+- `provider text not null` — `przelewy24`, `stripe` albo `manual`
 - `provider_event_id text null`
-- `event_type text not null`
-- `payload jsonb not null` — zapis bez danych karty i bez sekretów
-- `processed_at timestamptz null`
+- `event_type text not null` — niepusty tekst, bez listy nazw operatora
+- `payload jsonb not null` — obiekt JSON, bez danych karty i bez sekretów
+- `processed_at timestamptz null` — null oznacza zdarzenie przyjęte i jeszcze niezastosowane
 - `created_at timestamptz not null`
 
-Para (`provider`, `provider_event_id`) jest unikalna, gdy identyfikator nie jest null. Gdy operator nie nadaje identyfikatora zdarzenia, Express zapisuje skrót zweryfikowanego payloadu. Powtórzone zdarzenie nie wykonuje drugi raz tej samej zmiany statusu.
+Nie ma `updated_at` ani `changed_by`. Administratora potwierdzającego gotówkę zapisuje `order_status_history.changed_by`.
+
+Para (`provider`, `provider_event_id`) jest unikalna, gdy identyfikator nie jest null. Kolumna zostaje nullable. Express po weryfikacji podpisu zawsze zapisuje identyfikator operatora albo skrót zweryfikowanego payloadu w `provider_event_id` i nie stosuje drugi raz zdarzenia, które ma już `processed_at`. Zgodność `payment_events.provider` z operatorem płatności sprawdza Express, nie klucz obcy: `stripe` tylko przy płatności `stripe`, `przelewy24` tylko przy `przelewy24`, `manual` tylko przy gotówce.
 
 ### `idempotency_keys`
 
-Powtórzony `POST /checkout` z tym samym kluczem i tym samym body nie tworzy drugiego zamówienia.
+Osobny mechanizm od `payment_events`. Zabezpiecza powtórzenie tego samego żądania HTTP. Nie obsługuje webhooków.
+
+Wiersz powstaje w tej samej transakcji co operacja. Nie ma kolumny statusu ani wartości `pending`, `completed` i `failed`. Pusty wynik może istnieć tylko przed commitem. Express commituje dopiero uzupełnioną odpowiedź. Błąd walidacji i wycofana transakcja nie zostawiają zakończonego wyniku.
 
 - `id uuid PK`
-- `idempotency_key text not null` — nagłówek `Idempotency-Key`, do 255 znaków
+- `idempotency_key text not null` — nagłówek `Idempotency-Key`, od 1 do 255 znaków
+- `operation text not null` — stała nazwa operacji, od 1 do 100 znaków, bez listy wartości i bez surowego URL
 - `user_id uuid null references auth.users(id) on delete cascade`
-- `session_id char(64) null` — ten sam skrót ciasteczka co koszyk gościa
-- `request_hash text not null`
-- `response_status integer null`
-- `response_body jsonb null`
+- `session_id char(64) null` — ten sam skrót ciasteczka co koszyk gościa; check `^[0-9a-f]{64}$`
+- `request_hash char(64) not null` — SHA-256 znormalizowanego żądania; check `^[0-9a-f]{64}$`
+- `response_status integer null` — gdy ustawiony, od 200 do 299
+- `response_body jsonb null` — gdy ustawiony, obiekt JSON przeznaczony dla klienta
 - `order_id uuid null references orders(id) on delete set null`
 - `created_at timestamptz not null`
-- `expires_at timestamptz not null`
+- `expires_at timestamptz not null` — check `expires_at > created_at`
 
-Check właściciela jest taki sam jak przy koszyku: dokładnie jedno z pól `user_id` i `session_id`. Unikalność klucza jest osobno dla konta i osobno dla sesji. Ten sam klucz przy innym `request_hash` jest konfliktem.
+Oba pola wyniku są puste albo oba ustawione. Surowego żądania, tokenu, ciasteczka i danych karty tabela nie przechowuje. Nie ma klucza do koszyka ani do płatności. Checkout wypełnia `order_id`. Inne operacje mogą go zostawić puste.
+
+Check właściciela jest taki sam jak przy koszyku: dokładnie jedno z pól `user_id` i `session_id`. Logowanie nie przepisuje kluczy gościa na konto.
+
+Klucz nie jest unikalny globalnie. Unikalność obejmuje właściciela i operację:
+
+- `(user_id, operation, idempotency_key)`, gdzie `user_id is not null`
+- `(session_id, operation, idempotency_key)`, gdzie `session_id is not null`
+
+Ten sam napis może więc wystąpić u innego właściciela albo w innej operacji. Ten sam klucz przy innym `request_hash` jest konfliktem i operacja się nie wykonuje. Ten sam klucz, operacja, właściciel i hash zwracają zapisany wynik.
+
+Ważność wynosi 24 godziny. Indeks na `expires_at` służy usuwaniu starych wierszy. Predykat indeksu nie używa `now()`. Wygasły wiersz Express usuwa w transakcji nowego żądania z tym samym właścicielem, operacją i kluczem. Osobny proces cleanup nie jest częścią schematu. Jest też indeks na `order_id`.
 
 ## 8. Relacje
 
 - `auth.users` 1:1 `profiles`
 - `auth.users` 1:N `user_roles`
 - `auth.users` 0:1 `customers` na MVP
-- `customers` 1:N `customer_addresses`
+- `customers` 1:N `customer_addresses` — tabela adresów jeszcze bez migracji
 - `categories` 1:N `products`
-- `products` 1:N `product_images`
+- `products` 1:N `product_images` — tabela zdjęć jeszcze bez migracji
 - `carts` 1:N `cart_items`
 - `orders` 1:N `order_items`
-- `orders` 1:N `payments`
+- `orders` 1:N `payments` — najwyżej jedna aktywna płatność
 - `orders` 1:N `order_status_history`
+- `orders` 1:N `idempotency_keys` — `order_id` może być null
 - `payments` 1:N `payment_events`
 - `shop_profile` — jeden wiersz, bez relacji
-- `store_settings` — bez relacji
+- `store_settings` — jeszcze bez migracji, bez relacji
 
-Usunięcie konta kasuje profil, role i koszyk. Klienta oraz zamówienie zostawia ze znulowanym `user_id`. Snapshoty zostają.
+Usunięcie konta kasuje profil, role, koszyk i klucze idempotencji tego konta. Klienta oraz zamówienie zostawia ze znulowanym `user_id`. Snapshoty zostają. Klucze gościa zostają przy sesji. Usunięcie zamówienia, które ma płatność, jest zablokowane. Usunięcie zamówienia bez płatności zeruje `idempotency_keys.order_id`.
 
 ## 9. RLS i dostęp
 
-RLS jest włączone na wszystkich tabelach tego dokumentu. Express, przez `service_role`, i tak omija RLS, więc uprawnienia sprawdza jawnie w API.
+RLS jest włączone na każdej tabeli z obecnych migracji. Tabele jeszcze bez migracji dostaną RLS razem ze swoją migracją. Express, przez `service_role`, i tak omija RLS, więc uprawnienia sprawdza jawnie w API. RLS nie zastępuje tej kontroli.
 
 `anon` i `authenticated` nie mają `INSERT`, `UPDATE` ani `DELETE` na tych tabelach.
 
@@ -397,16 +439,17 @@ Nie wchodzą do schematu MVP: marketplace, multi-tenant, warianty, dostawa, kuri
 
 Schemat nie jest systemem księgowym. Przed sprzedażą produkcyjną nadal trzeba ustalić dokumenty sprzedaży, moment obowiązku podatkowego i retencję danych. Sposób liczenia kwot w zamówieniu jest w sekcjach 4–6.
 
-## 11. Kolejność przyszłych migracji
+## 11. Migracje
 
-1. `profiles` i trigger z `auth.users`, potem `user_roles`.
-2. `customers`, potem `customer_addresses`.
-3. `shop_profile` z jednym wierszem `unknown`.
-4. `categories`, `products`, `product_images`.
-5. `carts`, `cart_items`.
-6. `orders`, `order_items`, `order_status_history`.
-7. `payments`, `payment_events`.
-8. `idempotency_keys`.
-9. `store_settings`.
-10. RLS, zdjęcie zapisów dla ról klienta i indeksy, które nie powstały razem z tabelami.
-11. Seed demonstracyjny, bez sekretów i bez nadania `admin` przez publiczną rejestrację.
+Zastosowane lokalnie, w tej kolejności:
+
+1. `20261117140000_identity_and_shop_profile.sql` — `profiles`, trigger `handle_new_user`, `user_roles`, `customers`, `shop_profile`.
+2. `20261117150000_catalog_categories_and_products.sql` — `categories`, `products`.
+3. `20261117160000_carts_and_cart_items.sql` — `carts`, `cart_items`.
+4. `20261117170000_orders_and_status_history.sql` — `orders`, `order_items`, `order_status_history`.
+5. `20261117180000_payments_and_payment_events.sql` — `payments`, `payment_events` oraz unikalność `(id, payment_method, currency, gross_amount)` na `orders`.
+6. `20261117190000_idempotency_keys.sql` — `idempotency_keys`.
+
+RLS i indeksy tych tabel powstały razem z nimi.
+
+Jeszcze bez migracji: `customer_addresses`, `product_images`, `store_settings` oraz seed demonstracyjny, bez sekretów i bez nadania `admin` przez publiczną rejestrację.

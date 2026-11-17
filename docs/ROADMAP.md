@@ -28,28 +28,30 @@ Acceptance:
 - API health endpoint zwraca 200.
 - brak sekretów w repo.
 
-## Phase 2 — Database foundation
-Schemat jest opisany w `docs/DATABASE.md`. Ta faza dodaje migracje, nie logikę checkoutu.
+## Phase 2 — Database foundation — DONE
+Sześć kroków modelu bazodanowego jest zakończonych i zaakceptowanych na lokalnej bazie. Phase 3 nie jest rozpoczęta. Ta faza nie obejmuje checkoutu, webhooków ani API płatności.
 
-- [ ] Dodać `profiles` i `user_roles` (wyłącznie rola `admin`).
-- [ ] Dodać `customers` i `customer_addresses` (tylko `billing`).
-- [ ] Dodać `shop_profile` z jednym wierszem `seller_tax_status = unknown`.
-- [ ] Dodać `categories`, `products` (`tax_status`, `vat_rate`, `currency`) i `product_images`.
-- [ ] Dodać `carts` i `cart_items`: jeden właściciel, jeden aktywny koszyk, w bazie skrót sesji.
-- [ ] Dodać `orders` i `order_items`: sumy netto, VAT i brutto oraz oba snapshoty podatkowe.
-- [ ] Dodać `payments`, `payment_events` i `order_status_history`.
-- [ ] Dodać `idempotency_keys`.
+- [x] Dodać `profiles`, `user_roles` (wyłącznie rola `admin`) i `shop_profile` z jednym wierszem `seller_tax_status = unknown`.
+- [x] Dodać `customers`. `user_id` może być puste. Zgodny e-mail nie przypina zamówień gościa.
+- [x] Dodać `categories` i `products` (`tax_status`, `vat_rate`, `currency`).
+- [x] Dodać `carts` i `cart_items`: jeden właściciel, jeden aktywny koszyk, w bazie skrót sesji.
+- [x] Dodać `orders`, `order_items` i `order_status_history`: rozdzielone statusy płatności i realizacji, sumy netto, VAT i brutto oraz oba snapshoty podatkowe.
+- [x] Dodać `payments` i `payment_events`: jedna aktywna płatność, zgodność metody, waluty i kwoty z zamówieniem, zdarzenia operatora osobno od kluczy HTTP.
+- [x] Dodać `idempotency_keys` z unikalnością `(właściciel, operation, idempotency_key)`.
+- [x] Włączyć RLS na tabelach z tych migracji. Klient nie ma zapisu. Odczyt ma tylko tam, gdzie opisuje to `docs/DATABASE.md`.
+- [ ] Dodać `customer_addresses` (tylko `billing`).
+- [ ] Dodać `product_images`.
 - [ ] Dodać `store_settings` bez danych fiskalnych i sekretów.
-- [ ] Włączyć RLS i polityki zgodnie z `docs/DATABASE.md`.
 - [ ] Dodać seed demonstracyjny.
 
-Acceptance:
-- czysta baza może zostać utworzona z migracji, łącznie z jednym wierszem `shop_profile`.
+Acceptance spełnione dla sześciu migracji:
+- czysta baza powstaje z migracji, łącznie z jednym wierszem `shop_profile`.
 - check wiąże `tax_status` z `vat_rate`; waluta ma check formatu ISO 4217 i nie ma checka `= PLN`.
 - klient nie odczytuje cudzych zamówień ani koszyka przez PostgREST.
-- seed nie zawiera sekretów ani nadania roli `admin` przez rejestrację.
 
-## Phase 3 — Authentication & authorization
+Jeszcze otwarte: seed nie zawiera sekretów ani nadania roli `admin` przez rejestrację, bo seeda demonstracyjnego nie ma.
+
+## Phase 3 — Authentication & authorization — nierozpoczęta
 - [ ] Skonfigurować Supabase Auth.
 - [ ] Rejestracja/logowanie e-mail.
 - [ ] Google OAuth.

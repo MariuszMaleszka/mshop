@@ -8,6 +8,8 @@ MVP nie jest marketplace'em ani systemem SaaS multi-tenant.
 ## 2. Komponenty
 
 ### `apps/web` — Nuxt 4
+Aplikacja jest w JavaScript, bez TypeScriptu w kodzie źródłowym. Działa szkielet frontendu. Storefront, koszyk, checkout, konto i panel `/admin` są planowane, nie są jeszcze zaimplementowane.
+
 - publiczny storefront;
 - koszyk i checkout;
 - konto klienta;
@@ -16,12 +18,14 @@ MVP nie jest marketplace'em ani systemem SaaS multi-tenant.
 - zarządzanie sesją Supabase Auth.
 
 ### `apps/api` — Express 5
+API jest w JavaScript, w modułach ES. Zaimplementowany jest health check. Logika katalogu, koszyka, zamówień i płatności jest planowana.
+
 - REST API;
 - weryfikacja tokenów Supabase;
 - autoryzacja ról; brak wiersza w `user_roles` oznacza klienta, wiersz `admin` nadaje tylko serwer;
 - logika katalogu, koszyka, zamówień, płatności, waluty i podatku;
-- komunikacja z Supabase/PostgreSQL przez `service_role`;
-- integracje z operatorem płatności i dostawcą e-mail.
+- dostęp do PostgreSQL przez `service_role`, bez Supabase SDK w obecnym zakresie projektu;
+- integracje z operatorem płatności i dostawcą e-mail, jeszcze niepodłączone.
 
 ### Supabase
 - PostgreSQL jako główna baza danych;
@@ -39,13 +43,15 @@ MVP nie jest marketplace'em ani systemem SaaS multi-tenant.
 6. Backend zapisuje dane w PostgreSQL.
 7. Frontend otrzymuje tylko dane niezbędne do wyświetlenia.
 
-Katalog, dane klienta, koszyk, zamówienia i płatności są odczytywane przez Express. RLS jest dodatkową warstwą, bo klucz `anon` i tak jest w przeglądarce przy Supabase Auth. `service_role` omija RLS, dlatego backend sam sprawdza właściciela zasobu i rolę.
+Katalog, dane klienta, koszyk, zamówienia i płatności mają być odczytywane przez Express. RLS jest dodatkową warstwą, bo klucz `anon` i tak jest w przeglądarce przy Supabase Auth. Nie zastępuje weryfikacji tokenu ani sprawdzenia właściciela i roli. `service_role` omija RLS, dlatego backend sam sprawdza właściciela zasobu i rolę. Sekretu `service_role` nie wolno umieszczać we frontendzie.
 
-Nie używaj bezpośredniego zapisu z przeglądarki do tabel `orders`, `order_items`, `payments`, `payment_events`, `user_roles` ani do operacji administracyjnych. Koszyk gościa jest identyfikowany ciasteczkiem `httpOnly`; surowy identyfikator sesji nie trafia do bazy.
+Nie używaj bezpośredniego zapisu z przeglądarki do tabel `orders`, `order_items`, `payments`, `payment_events`, `idempotency_keys`, `user_roles` ani do operacji administracyjnych. Koszyk gościa jest identyfikowany ciasteczkiem `httpOnly`; surowy identyfikator sesji nie trafia do bazy.
+
+`idempotency_keys` i `payment_events` to dwa mechanizmy. Klucz idempotencji dotyczy powtórzonego żądania HTTP wybranych operacji `POST` i nie służy webhookom. Zdarzenie płatności dotyczy webhooka operatora albo ręcznego potwierdzenia gotówki. Webhook nie wysyła nagłówka `Idempotency-Key`.
 
 Checkout liczy kwoty z katalogu. Przy `seller_tax_status = unknown` zamówienie nie powstaje. Na MVP Express odrzuca walutę inną niż `PLN`, ale schemat jej do `PLN` nie więzi. Waluta i kwota brutto zamówienia oraz płatności zostają takie, jakie były w chwili checkoutu.
 
-## 4. Proponowana struktura monorepo
+## 4. Struktura monorepo
 
 ```text
 shop/
@@ -74,13 +80,15 @@ shop/
 
 ## 5. Moduły domenowe backendu
 
+Poniższy podział jest docelowy. Poza health checkiem moduły nie są jeszcze zaimplementowane.
+
 - `auth`: weryfikacja tożsamości i kontekst użytkownika; bez implementowania własnego systemu haseł.
 - `customers`: profile, typ klienta, adresy.
 - `catalog`: produkty, usługi, kategorie, media.
 - `cart`: koszyk i pozycje koszyka.
 - `checkout`: walidacja danych i utworzenie zamówienia.
 - `orders`: odczyt, statusy i historia zamówień.
-- `payments`: inicjowanie płatności, webhooki, zwroty i rejestrowanie zdarzeń.
+- `payments`: inicjowanie płatności, webhooki, zwroty i rejestrowanie zdarzeń w `payment_events`. Powtórzenia żądań HTTP obsługuje `idempotency_keys`, nie ta tabela.
 - `admin`: operacje administracyjne i dashboard.
 - `notifications`: e-maile transakcyjne.
 - `settings`: ustawienia niefiskalne w `store_settings` oraz status podatkowy sprzedawcy w `shop_profile`.
