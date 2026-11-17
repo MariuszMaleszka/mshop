@@ -22,6 +22,7 @@ const productionConfig = loadConfig({
   SUPABASE_URL: 'https://project.supabase.co',
 })
 const existingId = 'ab'.repeat(32)
+const otherId = 'cd'.repeat(32)
 const maxAge = String(30 * 24 * 60 * 60)
 
 function listen(app) {
@@ -124,6 +125,102 @@ describe('guest session id', () => {
   })
 })
 
+describe('guest session cookie parser', () => {
+  it('rejects two identical guest session cookies', () => {
+    assert.equal(
+      readGuestSessionId(
+        `shop_guest_session=${existingId}; shop_guest_session=${existingId}`,
+      ),
+      null,
+    )
+  })
+
+  it('rejects two different guest session cookies', () => {
+    assert.equal(
+      readGuestSessionId(
+        `theme=light; shop_guest_session=${existingId}; shop_guest_session=${otherId}`,
+      ),
+      null,
+    )
+  })
+
+  it('rejects a header when the first cookie is invalid and the second is valid', () => {
+    assert.equal(
+      readGuestSessionId(
+        `shop_guest_session=SHORT; shop_guest_session=${existingId}`,
+      ),
+      null,
+    )
+  })
+
+  it('rejects a header when the first cookie is valid and the second is invalid', () => {
+    assert.equal(
+      readGuestSessionId(
+        `shop_guest_session=${existingId}; shop_guest_session=NOT-A-VALID-SESSION`,
+      ),
+      null,
+    )
+  })
+
+  it('rejects a cookie with malformed percent-encoding', () => {
+    assert.equal(
+      readGuestSessionId(`shop_guest_session=${existingId.slice(0, 8)}%zz`),
+      null,
+    )
+  })
+
+  it('accepts a single cookie whose hex is URL-encoded', () => {
+    const encoded = `%61${existingId.slice(1)}`
+
+    assert.equal(
+      readGuestSessionId(`shop_guest_session=${encoded}`),
+      existingId,
+    )
+  })
+
+  it('rejects uppercase hex characters', () => {
+    assert.equal(
+      readGuestSessionId(`shop_guest_session=${existingId.toUpperCase()}`),
+      null,
+    )
+  })
+
+  it('rejects identifiers that are 63 or 65 characters', () => {
+    assert.equal(
+      readGuestSessionId(`shop_guest_session=${existingId.slice(0, 63)}`),
+      null,
+    )
+    assert.equal(readGuestSessionId(`shop_guest_session=${existingId}a`), null)
+  })
+
+  it('rejects a quoted cookie value', () => {
+    assert.equal(readGuestSessionId(`shop_guest_session="${existingId}"`), null)
+  })
+})
+
+describe('guest session logger', () => {
+  it('redacts the guest session identifier', () => {
+    const lines = []
+    const logger = createLogger({
+      nodeEnv: 'development',
+      write(_level, line) {
+        lines.push(line)
+      },
+    })
+
+    logger.info(`Cookie: theme=light; shop_guest_session=${existingId}`)
+    logger.error('"shop_guest_session":"' + existingId + '"', {
+      detail: `shop_guest_session=${otherId}`,
+    })
+
+    const text = lines.join('\n')
+
+    assert.equal(text.includes(existingId), false)
+    assert.equal(text.includes(otherId), false)
+    assert.match(text, /shop_guest_session=\[redacted\]/)
+  })
+})
+
 describe('POST /api/v1/session/guest', () => {
   it('creates a session cookie when none is present', async () => {
     const lines = []
@@ -176,6 +273,20 @@ describe('POST /api/v1/session/guest', () => {
       lines.join('\n').includes(hashGuestSessionId(existingId)),
       false,
     )
+  })
+
+  it('issues a new session id when the guest cookie is duplicated', async () => {
+    const lines = []
+    const result = await postGuest(appWith(testConfig, null, lines), {
+      cookie: `shop_guest_session=${existingId}; shop_guest_session=${existingId}`,
+    })
+    const sessionId = cookieValue(sessionCookie(result.setCookie))
+
+    assert.match(sessionId, /^[0-9a-f]{64}$/)
+    assert.notEqual(sessionId, existingId)
+    assert.equal(result.text.includes(existingId), false)
+    assert.equal(lines.join('\n').includes(existingId), false)
+    assert.equal(lines.join('\n').includes(sessionId), false)
   })
 
   it('replaces a cookie that is not 64 lowercase hex characters', async () => {

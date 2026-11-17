@@ -17,9 +17,9 @@ export function readGuestSessionId(cookieHeader) {
     return null
   }
 
-  const parts = cookieHeader.split(';')
+  const rawValues = []
 
-  for (const part of parts) {
+  for (const part of cookieHeader.split(';')) {
     const separator = part.indexOf('=')
 
     if (separator === -1) {
@@ -32,19 +32,22 @@ export function readGuestSessionId(cookieHeader) {
       continue
     }
 
-    const rawValue = part.slice(separator + 1).trim()
-    let value
-
-    try {
-      value = decodeURIComponent(rawValue)
-    } catch {
-      return null
-    }
-
-    return GUEST_SESSION_PATTERN.test(value) ? value : null
+    rawValues.push(part.slice(separator + 1).trim())
   }
 
-  return null
+  if (rawValues.length !== 1) {
+    return null
+  }
+
+  let value
+
+  try {
+    value = decodeURIComponent(rawValues[0])
+  } catch {
+    return null
+  }
+
+  return GUEST_SESSION_PATTERN.test(value) ? value : null
 }
 
 export function guestSessionCookieOptions(nodeEnv) {

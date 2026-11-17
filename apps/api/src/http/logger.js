@@ -6,6 +6,10 @@ function redact(value) {
       /\b(password|secret|token|api[_-]?key)\b\s*[=:]\s*[^&\s]+/gi,
       '$1=[redacted]',
     )
+    .replace(
+      /shop_guest_session(?:\\?["'])?\s*[:=]\s*(?:\\?["'])?[^\s;,"'\\]*/gi,
+      'shop_guest_session=[redacted]',
+    )
 }
 
 function defaultWrite(level, line) {

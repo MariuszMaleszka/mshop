@@ -188,7 +188,7 @@ Odpowiedź:
 { "data": { "authenticated": false }, "meta": {} }
 ```
 
-Ciasteczko jest `HttpOnly`, `SameSite=Lax`, `Path=/`, bez `Domain`, z czasem życia 30 dni. W produkcji ma atrybut `Secure`. Wartość to 64 znaki hex z 32 losowych bajtów. Brak ciasteczka albo niepoprawny format powoduje nowe losowanie. Poprawna wartość zostaje, a czas życia jest ustawiany od nowa.
+Ciasteczko jest `HttpOnly`, `SameSite=Lax`, `Path=/`, bez `Domain`, z czasem życia 30 dni. W produkcji ma atrybut `Secure`. Wartość to 64 znaki hex z 32 losowych bajtów. Brak ciasteczka, niepoprawny format albo więcej niż jedno wystąpienie `shop_guest_session` powoduje nowe losowanie. Przy duplikatach nie jest wybierana żadna z przesłanych wartości, także gdy są identyczne. Poprawna, pojedyncza wartość zostaje, a czas życia jest ustawiany od nowa.
 
 Surowy identyfikator jest tylko w ciasteczku. SHA-256 tego identyfikatora, zapisany jako 64 znaki hex, będzie jedyną postacią w przyszłym koszyku i w `carts.session_id`. Ten endpoint nie tworzy wiersza koszyka i nie zwraca identyfikatora ani skrótu.
 
