@@ -15,7 +15,9 @@ export function validateRequest(schemas = {}) {
 
   return function validateRequestMiddleware(req, _res, next) {
     const validated =
-      req.validated && typeof req.validated === 'object' ? { ...req.validated } : {}
+      req.validated && typeof req.validated === 'object'
+        ? { ...req.validated }
+        : {}
     const details = []
 
     for (const part of REQUEST_PARTS) {

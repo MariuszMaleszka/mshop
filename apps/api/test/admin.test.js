@@ -224,7 +224,8 @@ describe('requireAuth then requireAdmin', () => {
         lines.push(line)
       },
     })
-    const secret = 'relation "user_roles" does not exist at 127.0.0.1 password=secret'
+    const secret =
+      'relation "user_roles" does not exist at 127.0.0.1 password=secret'
     const database = fakeDatabase(async () => {
       throw new Error(secret)
     })

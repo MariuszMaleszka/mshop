@@ -10,7 +10,8 @@ let config
 try {
   config = loadConfig(process.env)
 } catch (error) {
-  const message = error instanceof Error ? error.message : 'Invalid configuration'
+  const message =
+    error instanceof Error ? error.message : 'Invalid configuration'
   console.error(message)
   process.exit(1)
 }

@@ -1,6 +1,12 @@
 import { z } from 'zod'
 
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'])
+const LOCAL_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '::1',
+  '[::1]',
+])
 const DEV_DATABASE_USER = 'postgres'
 const DEV_DATABASE_PASSWORD = 'postgres'
 const PLACEHOLDER_SECRETS = new Set([
@@ -42,7 +48,9 @@ function readEnv(env) {
     WEB_ORIGIN: blankToUndefined(env?.WEB_ORIGIN),
     DATABASE_URL: blankToUndefined(env?.DATABASE_URL),
     DATABASE_POOL_MAX: blankToUndefined(env?.DATABASE_POOL_MAX),
-    DATABASE_CONNECTION_TIMEOUT_MS: blankToUndefined(env?.DATABASE_CONNECTION_TIMEOUT_MS),
+    DATABASE_CONNECTION_TIMEOUT_MS: blankToUndefined(
+      env?.DATABASE_CONNECTION_TIMEOUT_MS,
+    ),
     DATABASE_IDLE_TIMEOUT_MS: blankToUndefined(env?.DATABASE_IDLE_TIMEOUT_MS),
     SUPABASE_URL: blankToUndefined(env?.SUPABASE_URL),
     SUPABASE_ANON_KEY: blankToUndefined(env?.SUPABASE_ANON_KEY),
@@ -120,7 +128,8 @@ function readPort(value, ctx) {
 }
 
 function readOrigin(value, nodeEnv, ctx) {
-  const raw = value ?? (nodeEnv === 'production' ? undefined : 'http://localhost:3000')
+  const raw =
+    value ?? (nodeEnv === 'production' ? undefined : 'http://localhost:3000')
 
   if (!raw) {
     addIssue(ctx, 'WEB_ORIGIN', 'is required in production')
@@ -129,7 +138,11 @@ function readOrigin(value, nodeEnv, ctx) {
 
   const url = parseUrl(raw)
 
-  if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:') || !hasNoExtraOriginParts(url)) {
+  if (
+    !url ||
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    !hasNoExtraOriginParts(url)
+  ) {
     addIssue(ctx, 'WEB_ORIGIN')
     return null
   }
@@ -159,7 +172,8 @@ function readDatabaseUrl(value, nodeEnv, ctx) {
   }
 
   const url = parseUrl(value)
-  const protocolOk = url && (url.protocol === 'postgres:' || url.protocol === 'postgresql:')
+  const protocolOk =
+    url && (url.protocol === 'postgres:' || url.protocol === 'postgresql:')
 
   if (!protocolOk || !url.hostname) {
     addIssue(ctx, 'DATABASE_URL')
@@ -177,7 +191,11 @@ function readDatabaseUrl(value, nodeEnv, ctx) {
   }
 
   if (nodeEnv === 'production' && (local || devCredential)) {
-    addIssue(ctx, 'DATABASE_URL', 'must not use a local development value in production')
+    addIssue(
+      ctx,
+      'DATABASE_URL',
+      'must not use a local development value in production',
+    )
     return null
   }
 
@@ -195,7 +213,11 @@ function readSupabaseUrl(value, nodeEnv, ctx) {
 
   const url = parseUrl(value)
 
-  if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:') || !hasNoExtraOriginParts(url)) {
+  if (
+    !url ||
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    !hasNoExtraOriginParts(url)
+  ) {
     addIssue(ctx, 'SUPABASE_URL')
     return null
   }
@@ -208,7 +230,11 @@ function readSupabaseUrl(value, nodeEnv, ctx) {
   }
 
   if (nodeEnv === 'production' && (url.protocol !== 'https:' || local)) {
-    addIssue(ctx, 'SUPABASE_URL', 'must use HTTPS and a non-local host in production')
+    addIssue(
+      ctx,
+      'SUPABASE_URL',
+      'must use HTTPS and a non-local host in production',
+    )
     return null
   }
 
@@ -225,7 +251,10 @@ function readOptionalSecret(value, field, nodeEnv, ctx) {
     return null
   }
 
-  if (nodeEnv === 'production' && PLACEHOLDER_SECRETS.has(value.toLowerCase())) {
+  if (
+    nodeEnv === 'production' &&
+    PLACEHOLDER_SECRETS.has(value.toLowerCase())
+  ) {
     addIssue(ctx, field, 'must not use a placeholder in production')
     return null
   }
@@ -235,7 +264,8 @@ function readOptionalSecret(value, field, nodeEnv, ctx) {
 
 const configSchema = envSchema.transform((env, ctx) => {
   const nodeEnv = env.NODE_ENV
-  const nodeEnvOk = nodeEnv === 'development' || nodeEnv === 'test' || nodeEnv === 'production'
+  const nodeEnvOk =
+    nodeEnv === 'development' || nodeEnv === 'test' || nodeEnv === 'production'
 
   if (!nodeEnvOk) {
     addIssue(ctx, 'NODE_ENV')

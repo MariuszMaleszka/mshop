@@ -50,7 +50,9 @@ export function createApp(config, options = {}) {
   })
 
   app.get('/api/v1/health/ready', async (_req, res) => {
-    const ready = options.database ? await options.database.checkConnection() : false
+    const ready = options.database
+      ? await options.database.checkConnection()
+      : false
 
     if (!ready) {
       throw new HttpError({

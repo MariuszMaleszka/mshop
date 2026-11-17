@@ -68,37 +68,43 @@ describe('PostgreSQL integration', () => {
     assert.equal(Number(result.rows[0].value), 7)
   })
 
-  it('answers ready when the database accepts a connection', { skip }, async () => {
-    const config = loadConfig({
-      NODE_ENV: 'test',
-      WEB_ORIGIN: 'http://localhost:3000',
-    })
-    const app = createApp(config, { database })
-    const server = await new Promise((resolve) => {
-      const listening = app.listen(0, '127.0.0.1', () => resolve(listening))
-    })
-
-    try {
-      const address = server.address()
-      const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/health/ready`)
-      const body = await response.json()
-
-      assert.equal(response.status, 200)
-      assert.deepEqual(body, {
-        data: { status: 'ready' },
-        meta: {},
+  it(
+    'answers ready when the database accepts a connection',
+    { skip },
+    async () => {
+      const config = loadConfig({
+        NODE_ENV: 'test',
+        WEB_ORIGIN: 'http://localhost:3000',
       })
-    } finally {
-      await new Promise((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error)
-            return
-          }
+      const app = createApp(config, { database })
+      const server = await new Promise((resolve) => {
+        const listening = app.listen(0, '127.0.0.1', () => resolve(listening))
+      })
 
-          resolve()
+      try {
+        const address = server.address()
+        const response = await fetch(
+          `http://127.0.0.1:${address.port}/api/v1/health/ready`,
+        )
+        const body = await response.json()
+
+        assert.equal(response.status, 200)
+        assert.deepEqual(body, {
+          data: { status: 'ready' },
+          meta: {},
         })
-      })
-    }
-  })
+      } finally {
+        await new Promise((resolve, reject) => {
+          server.close((error) => {
+            if (error) {
+              reject(error)
+              return
+            }
+
+            resolve()
+          })
+        })
+      }
+    },
+  )
 })

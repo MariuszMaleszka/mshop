@@ -55,7 +55,8 @@ describe('HTTP errors', () => {
           status: 409,
           code: 'CONFLICT',
           message: 'Already exists',
-          logMessage: 'password=hidden-secret postgres://user:pw@db.internal/shop',
+          logMessage:
+            'password=hidden-secret postgres://user:pw@db.internal/shop',
         })
       })
     }, lines)
@@ -73,8 +74,14 @@ describe('HTTP errors', () => {
           details: [],
         },
       })
-      assert.equal(lines.some((line) => line.includes('hidden-secret')), false)
-      assert.equal(lines.some((line) => line.includes('postgres://')), false)
+      assert.equal(
+        lines.some((line) => line.includes('hidden-secret')),
+        false,
+      )
+      assert.equal(
+        lines.some((line) => line.includes('postgres://')),
+        false,
+      )
     } finally {
       await close(running.server)
     }
@@ -134,10 +141,22 @@ describe('HTTP errors', () => {
       assert.equal(serialized.includes('select password'), false)
       assert.equal(serialized.includes(secret), false)
       assert.equal(serialized.includes('at '), false)
-      assert.equal(lines.some((line) => line.includes(secret)), false)
-      assert.equal(lines.some((line) => line.includes('postgres://')), false)
-      assert.equal(lines.some((line) => line.includes('client-token-value')), false)
-      assert.equal(lines.some((line) => line.includes('cookie-secret-value')), false)
+      assert.equal(
+        lines.some((line) => line.includes(secret)),
+        false,
+      )
+      assert.equal(
+        lines.some((line) => line.includes('postgres://')),
+        false,
+      )
+      assert.equal(
+        lines.some((line) => line.includes('client-token-value')),
+        false,
+      )
+      assert.equal(
+        lines.some((line) => line.includes('cookie-secret-value')),
+        false,
+      )
     } finally {
       await close(running.server)
     }
@@ -212,9 +231,18 @@ describe('HTTP errors', () => {
       })
       assert.match(requestId, /^[0-9a-f-]{36}$/)
       assert.notEqual(requestId, 'client-supplied-id')
-      assert.equal(lines.some((line) => line.includes(requestId)), true)
-      assert.equal(lines.some((line) => line.includes('/api/v1/health')), true)
-      assert.equal(lines.some((line) => line.includes('query-secret-value')), false)
+      assert.equal(
+        lines.some((line) => line.includes(requestId)),
+        true,
+      )
+      assert.equal(
+        lines.some((line) => line.includes('/api/v1/health')),
+        true,
+      )
+      assert.equal(
+        lines.some((line) => line.includes('query-secret-value')),
+        false,
+      )
     } finally {
       await close(running.server)
     }

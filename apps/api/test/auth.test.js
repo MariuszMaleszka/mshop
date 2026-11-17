@@ -3,7 +3,10 @@ import { before, describe, it } from 'node:test'
 import { SignJWT, exportJWK, generateKeyPair, importJWK } from 'jose'
 import { JWKSNoMatchingKey, JWKSTimeout } from 'jose/errors'
 import { requireAuth } from '../src/auth/require-auth.js'
-import { createAccessTokenVerifier, supabaseJwksUrl } from '../src/auth/tokens.js'
+import {
+  createAccessTokenVerifier,
+  supabaseJwksUrl,
+} from '../src/auth/tokens.js'
 import { createApp } from '../src/app.js'
 import { createLogger } from '../src/http/logger.js'
 import { loadConfig } from '../src/config.js'
@@ -48,7 +51,10 @@ function verifierWith(jwks = localJwks()) {
   })
 }
 
-async function signToken(key, { header = {}, claims = {}, subject = userId } = {}) {
+async function signToken(
+  key,
+  { header = {}, claims = {}, subject = userId } = {},
+) {
   const token = new SignJWT(claims)
     .setProtectedHeader({
       alg: 'ES256',
@@ -397,7 +403,11 @@ describe('access token authentication', () => {
   it('keeps health and readiness public', async () => {
     const result = await send(verifierWith(), '/api/v1/health')
     const ready = await send(verifierWith(), '/api/v1/health/ready', {
-      database: { async checkConnection() { return true } },
+      database: {
+        async checkConnection() {
+          return true
+        },
+      },
     })
 
     assert.equal(result.status, 200)
@@ -435,15 +445,20 @@ describe('access token authentication', () => {
       },
     })
 
-    await assert.rejects(verifier.verifyAccessToken('header.payload.signature'), (error) => {
-      assert.equal(error.status, 503)
-      assert.equal(error.logMessage, 'auth.not_configured')
-      return true
-    })
+    await assert.rejects(
+      verifier.verifyAccessToken('header.payload.signature'),
+      (error) => {
+        assert.equal(error.status, 503)
+        assert.equal(error.logMessage, 'auth.not_configured')
+        return true
+      },
+    )
     assert.equal(called, false)
   })
 })
 
 function publishedIncludes(result, secret) {
-  return JSON.stringify({ body: result.body, lines: result.lines }).includes(secret)
+  return JSON.stringify({ body: result.body, lines: result.lines }).includes(
+    secret,
+  )
 }

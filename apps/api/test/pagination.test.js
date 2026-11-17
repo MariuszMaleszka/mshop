@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { paginationOffset, paginationQuerySchema } from '../src/http/pagination.js'
+import {
+  paginationOffset,
+  paginationQuerySchema,
+} from '../src/http/pagination.js'
 
 function parse(query) {
   return paginationQuerySchema.safeParse(query)
@@ -60,7 +63,10 @@ describe('pagination', () => {
   })
 
   it('rejects an offset that is not a safe integer', () => {
-    assert.throws(() => paginationOffset(Number.MAX_SAFE_INTEGER, 100), TypeError)
+    assert.throws(
+      () => paginationOffset(Number.MAX_SAFE_INTEGER, 100),
+      TypeError,
+    )
     assert.equal(
       parse({ page: String(Number.MAX_SAFE_INTEGER), limit: '100' }).success,
       false,

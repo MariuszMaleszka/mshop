@@ -53,7 +53,10 @@ describe('loadConfig', () => {
       SUPABASE_URL: 'http://127.0.0.1:54321',
     })
 
-    assert.equal(config.databaseUrl, 'postgresql://postgres:postgres@127.0.0.1:54322/postgres')
+    assert.equal(
+      config.databaseUrl,
+      'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
+    )
     assert.equal(config.supabaseUrl, 'http://127.0.0.1:54321')
   })
 

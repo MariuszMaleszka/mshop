@@ -77,7 +77,8 @@ describe('database pool', () => {
   it('runs a parameterized query through one pool', async () => {
     const pool = fakePool()
     const database = createDatabase({
-      connectionString: 'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
+      connectionString:
+        'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
       max: 4,
       connectionTimeoutMs: 1000,
       idleTimeoutMs: 2000,
@@ -103,7 +104,8 @@ describe('database pool', () => {
     const { logger, lines } = capturingLogger()
     const pool = fakePool()
     const database = createDatabase({
-      connectionString: 'postgresql://app:secret-password@127.0.0.1:54322/postgres',
+      connectionString:
+        'postgresql://app:secret-password@127.0.0.1:54322/postgres',
       logger,
       createPool() {
         return pool
@@ -113,7 +115,9 @@ describe('database pool', () => {
     assert.equal(await database.checkConnection(), true)
     pool.queries.length = 0
     pool.query = async function query() {
-      throw new Error('connect ECONNREFUSED 127.0.0.1:54322 password=secret-password')
+      throw new Error(
+        'connect ECONNREFUSED 127.0.0.1:54322 password=secret-password',
+      )
     }
 
     assert.equal(await database.checkConnection(), false)
@@ -130,7 +134,8 @@ describe('database pool', () => {
   it('closes the pool once', async () => {
     const pool = fakePool()
     const database = createDatabase({
-      connectionString: 'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
+      connectionString:
+        'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
       createPool() {
         return pool
       },

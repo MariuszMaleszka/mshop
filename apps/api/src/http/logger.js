@@ -2,7 +2,10 @@ function redact(value) {
   return String(value)
     .replace(/postgres(?:ql)?:\/\/\S+/gi, '[redacted]')
     .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
-    .replace(/\b(password|secret|token|api[_-]?key)\b\s*[=:]\s*[^&\s]+/gi, '$1=[redacted]')
+    .replace(
+      /\b(password|secret|token|api[_-]?key)\b\s*[=:]\s*[^&\s]+/gi,
+      '$1=[redacted]',
+    )
 }
 
 function defaultWrite(level, line) {
@@ -48,7 +51,10 @@ function safeFields(fields) {
   return safe
 }
 
-export function createLogger({ nodeEnv = 'development', write = defaultWrite } = {}) {
+export function createLogger({
+  nodeEnv = 'development',
+  write = defaultWrite,
+} = {}) {
   const silent = nodeEnv === 'test'
 
   function writeLog(level, message, fields) {

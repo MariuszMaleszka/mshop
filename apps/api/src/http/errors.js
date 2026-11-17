@@ -14,7 +14,9 @@ export class HttpError extends Error {
 
     this.status = status
     this.code =
-      typeof code === 'string' && /^[A-Z0-9_]+$/.test(code) ? code : 'HTTP_ERROR'
+      typeof code === 'string' && /^[A-Z0-9_]+$/.test(code)
+        ? code
+        : 'HTTP_ERROR'
     this.details = Array.isArray(details) ? details : []
     this.logMessage = typeof logMessage === 'string' ? logMessage : undefined
   }

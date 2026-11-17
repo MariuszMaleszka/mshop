@@ -36,7 +36,8 @@ export function errorHandler(logger) {
 
     logger.error('request.unhandled', {
       requestId,
-      detail: typeof err?.message === 'string' ? err.message : 'Unhandled API error',
+      detail:
+        typeof err?.message === 'string' ? err.message : 'Unhandled API error',
     })
     clientError(res, 500, 'INTERNAL_ERROR', 'Internal server error')
   }

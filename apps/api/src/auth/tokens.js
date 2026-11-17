@@ -51,7 +51,8 @@ export function createAccessTokenVerifier({
 } = {}) {
   const issuer = supabaseUrl ? supabaseIssuer(supabaseUrl) : null
   const keySet =
-    jwks ?? (issuer ? createJwks(supabaseJwksUrl(supabaseUrl), JWKS_OPTIONS) : null)
+    jwks ??
+    (issuer ? createJwks(supabaseJwksUrl(supabaseUrl), JWKS_OPTIONS) : null)
 
   return {
     async verifyAccessToken(token) {
@@ -71,7 +72,10 @@ export function createAccessTokenVerifier({
           requiredClaims: ['exp'],
         })
 
-        if (typeof payload.sub !== 'string' || !UUID_PATTERN.test(payload.sub)) {
+        if (
+          typeof payload.sub !== 'string' ||
+          !UUID_PATTERN.test(payload.sub)
+        ) {
           throw unauthorized('auth.invalid_subject')
         }
 
