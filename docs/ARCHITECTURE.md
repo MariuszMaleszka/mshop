@@ -25,6 +25,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check. Logik
 - autoryzacja administratora przez `requireAdmin` po `requireAuth`; rola jest czytana z `public.user_roles`, a nie z JWT; brak wiersza `admin` oznacza klienta, a wiersz nadaje tylko serwer; wynik nie jest cache'owany;
 - logika katalogu, koszyka, zamówień, płatności, waluty i podatku;
 - konfiguracja w `apps/api/src/config.js`, walidowana raz przy starcie przez Zod; proces nie ładuje pliku `.env` sam;
+- walidacja wejścia przyszłych endpointów przez `validateRequest` i schematy Zod; handler czyta `req.validated.body`, `req.validated.params` i `req.validated.query`, a nie surowe pola tam, gdzie walidacja już je przetworzyła;
 - błędy HTTP przechodzą przez jedno middleware; logi nie zawierają nagłówków, body, query stringu ani sekretów;
 - dostęp do PostgreSQL idzie przez jedną pulę `pg` i serwerowy `DATABASE_URL`, bez Supabase SDK i bez ORM;
 - klucz `service_role` zostaje sekretem serwerowym i nie jest potrzebny, dopóki nie ma Storage albo administracyjnego API Auth;
@@ -109,7 +110,7 @@ Nie twórz pustych plików ani warstw bez uzasadnienia.
 - Controller: HTTP, statusy odpowiedzi, mapowanie request/response.
 - Service: reguły biznesowe i koordynacja operacji.
 - Repository: odczyt/zapis danych.
-- Validation: walidacja wejścia.
+- Validation: `validateRequest` sprawdza wybrane części żądania schematem Zod. Nieudane dane dają HTTP 400 `VALIDATION_ERROR` z komunikatem `Invalid request data`. Szczegóły zawierają lokalizację, ścieżkę, kod Zod i komunikat, bez przesłanej wartości. Paginacja list używa `page` i `limit` z query string: domyślnie 1 i 20, limit najwyżej 100, `offset` to `(page - 1) * limit`.
 - Integration: komunikacja z usługami zewnętrznymi.
 - Frontend composable: stan i wywołania API związane z UI; bez reguł biznesowych.
 - Shared: schematy/stałe współdzielone, bez dostępu do bazy i sekretów.

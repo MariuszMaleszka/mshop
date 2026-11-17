@@ -29,11 +29,22 @@ Błąd:
 {
   "error": {
     "code": "VALIDATION_ERROR",
-    "message": "Request validation failed",
-    "details": []
+    "message": "Invalid request data",
+    "details": [
+      {
+        "location": "body",
+        "path": "name",
+        "code": "too_small",
+        "message": "Too small: expected string to have >=1 characters"
+      }
+    ]
   }
 }
 ```
+
+Niepoprawny JSON nadal zwraca HTTP 400, kod `VALIDATION_ERROR` i komunikat `Request validation failed`. Walidacja schematu Zod zwraca komunikat `Invalid request data`. `details` zawiera tylko lokalizację (`body`, `params`, `query`), ścieżkę pola, kod błędu Zod i komunikat walidacji. Nie zawiera przesłanej wartości, tokenu ani całego żądania.
+
+Handler czyta dane z `req.validated`, na przykład `const { page, limit } = req.validated.query`. Middleware walidacji nie jest globalne.
 
 ## 3. Health
 - `GET /api/v1/health` — sprawdzenie, że proces API działa. Nie wymaga autoryzacji.
@@ -169,7 +180,7 @@ Planowane. Wszystkie endpointy `/admin/*` mają użyć `requireAuth` i `requireA
 - `GET /admin/payments`
 
 ## 10. Paginacja i filtrowanie
-Preferuj `page` i `limit` albo stabilny cursor. Ustal maksymalny limit po stronie backendu. Waliduj sortowanie i nazwy filtrów przez allowlistę.
+Wspólny schemat czyta `page` i `limit` z query string. `page` domyślnie wynosi 1, `limit` domyślnie 20, a najwyższy `limit` to 100. Obie wartości muszą być dodatnimi liczbami całkowitymi. `offset` wynosi `(page - 1) * limit`. Sortowanie, filtry domenowe i paginacja kursorowa nie są jeszcze zaimplementowane.
 
 ## 11. Idempotencja
 Planowane. Nagłówek `Idempotency-Key` będzie wymagany dla:
