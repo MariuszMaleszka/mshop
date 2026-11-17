@@ -79,6 +79,28 @@ Gdy nie da się pobrać kluczy publicznych:
 
 Awaria JWKS nie jest zgłaszana jako błąd tokenu. `GET /api/v1/health` i `GET /api/v1/health/ready` nie wymagają nagłówka `Authorization`.
 
+Przyszłe trasy administratora używają `requireAuth`, a potem `requireAdmin`. Rola jest sprawdzana w `public.user_roles` przy każdym żądaniu. Claim roli w JWT nie nadaje uprawnień.
+
+Brak uwierzytelnienia przed sprawdzeniem roli:
+
+- HTTP 401
+- kod `UNAUTHORIZED`
+- komunikat `Authentication required`
+
+Zalogowany użytkownik bez wiersza `admin`:
+
+- HTTP 403
+- kod `FORBIDDEN`
+- komunikat `Insufficient permissions`
+
+Błąd odczytu roli z PostgreSQL:
+
+- HTTP 503
+- kod `SERVICE_UNAVAILABLE`
+- komunikat `Service unavailable`
+
+Odpowiedź 503 nie zawiera SQL, nazw tabel ani szczegółów połączenia. Nie oznacza braku uprawnień.
+
 ## 4. Publiczny katalog
 Planowane:
 - `GET /products` — lista aktywnych produktów; filtry i paginacja.
@@ -136,7 +158,7 @@ Operator nie jest wybrany. Kontrakt przewiduje `przelewy24` albo `stripe` oraz g
 Nie uznawaj płatności na podstawie query parametru ani powrotu klienta na stronę sukcesu. `cancelled` oznacza płatność niedoszłą. Zwrot po wpłacie to `refunded` albo `partially_refunded`.
 
 ## 9. Admin
-Planowane. Wszystkie endpointy `/admin/*` mają wymagać roli `admin` sprawdzanej po stronie Express.
+Planowane. Wszystkie endpointy `/admin/*` mają użyć `requireAuth` i `requireAdmin`. Middleware już sprawdza wiersz `admin` w `user_roles`. Samych tras jeszcze nie ma.
 - `GET /admin/dashboard`
 - CRUD `/admin/products`
 - CRUD `/admin/categories`

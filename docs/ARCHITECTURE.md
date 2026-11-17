@@ -22,7 +22,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check. Logik
 
 - REST API;
 - weryfikacja access tokenu Supabase biblioteką `jose` i publicznym JWKS; podpis, `iss`, `aud`, `exp` i UUID w `sub` są sprawdzane, a `req.auth.userId` dostaje dopiero zweryfikowany `sub`;
-- autoryzacja ról; brak wiersza w `user_roles` oznacza klienta, wiersz `admin` nadaje tylko serwer; ta kontrola nie jest jeszcze zaimplementowana;
+- autoryzacja administratora przez `requireAdmin` po `requireAuth`; rola jest czytana z `public.user_roles`, a nie z JWT; brak wiersza `admin` oznacza klienta, a wiersz nadaje tylko serwer; wynik nie jest cache'owany;
 - logika katalogu, koszyka, zamówień, płatności, waluty i podatku;
 - konfiguracja w `apps/api/src/config.js`, walidowana raz przy starcie przez Zod; proces nie ładuje pliku `.env` sam;
 - błędy HTTP przechodzą przez jedno middleware; logi nie zawierają nagłówków, body, query stringu ani sekretów;
@@ -41,7 +41,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check. Logik
 1. Nuxt komunikuje się z Express przez HTTPS/REST.
 2. Nuxt przekazuje access token Supabase w nagłówku `Authorization: Bearer <token>`.
 3. Express weryfikuje access token. Supabase Auth loguje użytkownika i wydaje JWT. Express nie przyjmuje haseł i nie używa `SUPABASE_SERVICE_ROLE_KEY` ani sekretu HMAC. Adres JWKS powstaje z `SUPABASE_URL`: `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. Jedna funkcja `createRemoteJWKSet` powstaje przy starcie procesu i nie pobiera kluczy, dopóki pierwsza chroniona trasa nie sprawdzi tokenu. Zestaw jest cache'owany przez 10 minut. Nieznany `kid` powoduje ponowne pobranie po 30 sekundach, więc rotacja klucza nie wymaga restartu. Dozwolone algorytmy to `ES256` i `RS256`. Brak nagłówka albo token odrzucony daje HTTP 401. Niedostępny JWKS daje HTTP 503, a nie 401. Middleware `requireAuth` nie obejmuje całego API. `GET /api/v1/health` i `GET /api/v1/health/ready` pozostają publiczne.
-4. Express sprawdza uprawnienia do konkretnej operacji i zasobu. Sam poprawny token nie nadaje jeszcze roli ani dostępu do cudzych danych.
+4. Express sprawdza uprawnienia do konkretnej operacji i zasobu. `requireAdmin` wykonuje `SELECT 1 FROM public.user_roles WHERE user_id = $1 AND role = 'admin' LIMIT 1`. Brak wcześniejszego `req.auth.userId` daje HTTP 401. Brak wiersza daje HTTP 403. Błąd zapytania daje HTTP 503 i nie jest traktowany jako brak roli. Claim roli w JWT nie jest używany. Middleware nie jest globalne. Sprawdzenie właściciela zwykłych zasobów klienta pozostaje przy przyszłych endpointach.
 5. Operacje biznesowe są wykonywane w backendzie.
 6. Backend zapisuje dane w PostgreSQL.
 7. Frontend otrzymuje tylko dane niezbędne do wyświetlenia.
