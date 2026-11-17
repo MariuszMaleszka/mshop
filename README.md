@@ -2,7 +2,7 @@
 
 Dokumentacja startowa dla modułowego sklepu internetowego:
 - Frontend: Nuxt 4 + JavaScript
-- Backend: Node.js + Express + JavaScript
+- Backend: Node.js + Express 5 + JavaScript
 - Database/Auth/Storage: Supabase (PostgreSQL)
 - Monorepo: pnpm workspaces
 
@@ -13,8 +13,8 @@ Dokumentacja startowa dla modułowego sklepu internetowego:
 3. Katalog obsługuje produkty fizyczne, cyfrowe i usługi.
 4. Płatności: operator online (początkowo jeden) oraz gotówka jako metoda rozliczenia ręcznego.
 5. W MVP nie ma rezerwacji terminów, dostaw, fakturowania ani wielosklepowości.
-6. Ceny są przechowywane jako liczby całkowite w najmniejszej jednostce waluty (np. grosze), nigdy jako float.
-7. Backend Express jest właścicielem logiki biznesowej. Frontend nie zapisuje bezpośrednio zamówień ani płatności do bazy.
+6. Ceny są kwotą należną, jako liczby całkowite w najmniejszej jednostce waluty (dla PLN: grosze), nigdy jako float. Schemat trzyma kod ISO 4217; na MVP Express przyjmuje tylko PLN. Model VAT jest w `docs/DATABASE.md`.
+7. Backend Express jest właścicielem logiki biznesowej. Frontend nie zapisuje bezpośrednio zamówień, płatności ani ról do bazy.
 
 ## Jak używać dokumentacji
 

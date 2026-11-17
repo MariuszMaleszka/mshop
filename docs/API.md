@@ -5,7 +5,9 @@
 - JSON request/response.
 - Chronione endpointy: `Authorization: Bearer <Supabase access token>`.
 - Daty w ISO 8601 UTC.
-- Kwoty jako integer w groszach, np. `12900` = 129,00 PLN.
+- Kwoty jako integer w najmniejszej jednostce waluty. Dla PLN `12900` = 129,00 PLN.
+- Waluta jako kod ISO 4217. Na MVP Express przyjmuje wyłącznie `PLN`.
+- Cena w żądaniu klienta nie jest źródłem prawdy. Checkout bierze kwotę należną, walutę i podatek z katalogu.
 - Błędy mają wspólny format.
 - Nie zwracaj stack trace ani danych dostawców płatności.
 
@@ -30,45 +32,69 @@ Błąd:
 }
 ```
 
-## 3. Publiczny katalog
+## 3. Health
+- `GET /health` — sprawdzenie, że proces API działa. Nie wymaga autoryzacji.
+
+```json
+{
+  "data": { "status": "ok" },
+  "meta": {}
+}
+```
+
+## 4. Publiczny katalog
 - `GET /products` — lista aktywnych produktów; filtry i paginacja.
 - `GET /products/:slug` — szczegóły aktywnego produktu.
 - `GET /categories` — lista aktywnych kategorii.
 
-## 4. Konto i klient
+## 5. Konto i klient
 Supabase Auth obsługuje rejestrację, logowanie, OAuth i odzyskiwanie hasła. Express udostępnia:
 - `GET /me` — bieżąca tożsamość i podstawowy profil.
 - `GET /customers/me` — dane klienta.
 - `PUT /customers/me` — aktualizacja danych klienta.
-- `GET /customers/me/addresses` — adresy.
-- `POST /customers/me/addresses` — dodanie adresu.
-- `PUT /customers/me/addresses/:id` — aktualizacja własnego adresu.
-- `DELETE /customers/me/addresses/:id` — usunięcie własnego adresu.
+- `GET /customers/me/addresses` — adresy rozliczeniowe.
+- `POST /customers/me/addresses` — dodanie adresu rozliczeniowego.
+- `PUT /customers/me/addresses/:id` — aktualizacja własnego adresu rozliczeniowego.
+- `DELETE /customers/me/addresses/:id` — usunięcie własnego adresu rozliczeniowego.
 
-## 5. Koszyk
+Adresu dostawy na MVP nie ma. Telefon kontaktowy należy do klienta, nie do profilu konta.
+
+## 6. Koszyk
 - `GET /cart` — pobranie koszyka.
 - `POST /cart/items` — dodanie pozycji.
 - `PATCH /cart/items/:id` — zmiana ilości.
 - `DELETE /cart/items/:id` — usunięcie pozycji.
 
-Backend sprawdza aktywność produktu, ilość i aktualną cenę. Nie ufaj cenom przesłanym przez frontend.
+Koszyk konta jest powiązany z użytkownikiem z tokenu. Koszyk gościa jest powiązany z nieprzewidywalnym ciasteczkiem `httpOnly`; baza przechowuje skrót tego sekretu. Właściciel jest jeden. Jeden właściciel ma jeden koszyk aktywny.
 
-## 6. Checkout i zamówienia
+Po zalogowaniu Express łączy koszyk gościa z koszykiem konta: przepisuje sam koszyk gościa albo sumuje ilości i porzuca koszyk gościa. Cena pozycji koszyka nie jest utrwalana jako cena sprzedaży.
+
+Backend sprawdza aktywność produktu, ilość, aktualną kwotę należną i zgodność waluty produktu z walutą koszyka. Nie ufaj cenom, podatkowi ani walucie przesłanym przez frontend.
+
+## 7. Checkout i zamówienia
 - `POST /checkout` — walidacja koszyka i danych, utworzenie zamówienia oraz płatności.
 - `GET /orders` — zamówienia zalogowanego klienta.
 - `GET /orders/:id` — szczegóły własnego zamówienia.
 - `POST /orders/:id/cancel` — anulowanie, jeśli reguły biznesowe na to pozwalają.
 
-Checkout powinien być transakcyjny. Jeśli użyty sposób dostępu do PostgreSQL nie zapewnia transakcji obejmującej wszystkie operacje, rozważ funkcję SQL/RPC lub odpowiednią warstwę transakcyjną. Nie twórz zamówienia w stanie częściowym.
+Checkout jest zablokowany, gdy `seller_tax_status` wynosi `unknown`.
 
-## 7. Płatności
-- `POST /payments/:id/retry` — ponowienie płatności, jeśli dozwolone.
-- `POST /webhooks/payments/:provider` — webhook operatora, bez zwykłej autoryzacji użytkownika, ale z weryfikacją podpisu/uwierzytelnienia i idempotencją.
+Checkout jest jedną transakcją: ponowna walidacja katalogu, snapshot rozliczeniowy, snapshot katalogowy i zastosowany snapshot podatku, sumy `net_amount`, `tax_amount` i `gross_amount`, płatność oraz oznaczenie koszyka jako przekonwertowanego. Jeśli klient bazy nie obejmuje tych zapisów jedną transakcją, ta sama kolejność idzie do funkcji SQL. Nie twórz zamówienia w stanie częściowym.
+
+`gross_amount` jest kwotą do zapłaty. Dla `standard` przy czynnym podatniku podatek jest różnicą brutto i netto, liczoną osobno na pozycji, połową w górę do grosza, na liczbach całkowitych. Dla `zero_rated`, `exempt`, `not_subject` oraz przy sprzedawcy `exempt` podatek wynosi 0, a netto równa się brutto. Zamówienie nie zapisuje statusu `unknown`.
+
+`GET /orders` obejmuje zamówienia, których `user_id` jest kontem z tokenu. Zamówienie gościa nie dostaje tego powiązania przez sam e-mail.
+
+## 8. Płatności
+- `POST /payments/:id/retry` — ponowienie płatności, jeśli dozwolone. Nowa próba jest nową płatnością.
+- `POST /webhooks/payments/:provider` — webhook operatora, bez zwykłej autoryzacji użytkownika. Express sprawdza podpis, kwotę, walutę, zamówienie i status, a zdarzenie zapisuje idempotentnie.
 - `POST /admin/orders/:id/mark-paid` — ręczne potwierdzenie gotówki przez administratora, z audytem.
 
-Nie uznawaj płatności na podstawie query parametru ani powrotu klienta na stronę sukcesu.
+Operator nie jest wybrany. Kontrakt przewiduje `przelewy24` albo `stripe` oraz gotówkę. `payments.amount` równa się `orders.gross_amount`, a `payments.currency` równa się `orders.currency`. Po utworzeniu tych pól nie zmieniamy.
 
-## 8. Admin
+Nie uznawaj płatności na podstawie query parametru ani powrotu klienta na stronę sukcesu. `cancelled` oznacza płatność niedoszłą. Zwrot po wpłacie to `refunded` albo `partially_refunded`.
+
+## 9. Admin
 Wszystkie endpointy `/admin/*` wymagają roli `admin` sprawdzanej po stronie Express.
 - `GET /admin/dashboard`
 - CRUD `/admin/products`
@@ -79,15 +105,15 @@ Wszystkie endpointy `/admin/*` wymagają roli `admin` sprawdzanej po stronie Exp
 - `GET /admin/customers`
 - `GET /admin/payments`
 
-## 9. Paginacja i filtrowanie
+## 10. Paginacja i filtrowanie
 Preferuj `page` i `limit` albo stabilny cursor. Ustal maksymalny limit po stronie backendu. Waliduj sortowanie i nazwy filtrów przez allowlistę.
 
-## 10. Idempotencja
+## 11. Idempotencja
 - Checkout powinien przyjmować `Idempotency-Key`, aby uniknąć podwójnego utworzenia zamówienia po ponowieniu requestu.
 - Webhooki powinny rejestrować unikalny identyfikator zdarzenia i nie wykonywać drugi raz tej samej zmiany.
 - Operacje płatnicze muszą sprawdzać zgodność kwoty, waluty, zamówienia i statusu.
 
-## 11. Statusy
+## 12. Statusy
 Status płatności: `pending`, `paid`, `failed`, `cancelled`, `refunded`, `partially_refunded`.
 Status realizacji: `new`, `processing`, `completed`, `cancelled`.
 

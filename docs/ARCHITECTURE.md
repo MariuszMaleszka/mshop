@@ -15,12 +15,12 @@ MVP nie jest marketplace'em ani systemem SaaS multi-tenant.
 - wyświetlanie danych pobieranych z API;
 - zarządzanie sesją Supabase Auth.
 
-### `apps/api` — Express
+### `apps/api` — Express 5
 - REST API;
 - weryfikacja tokenów Supabase;
-- autoryzacja ról;
-- logika katalogu, koszyka, zamówień i płatności;
-- komunikacja z Supabase/PostgreSQL;
+- autoryzacja ról; brak wiersza w `user_roles` oznacza klienta, wiersz `admin` nadaje tylko serwer;
+- logika katalogu, koszyka, zamówień, płatności, waluty i podatku;
+- komunikacja z Supabase/PostgreSQL przez `service_role`;
 - integracje z operatorem płatności i dostawcą e-mail.
 
 ### Supabase
@@ -39,7 +39,11 @@ MVP nie jest marketplace'em ani systemem SaaS multi-tenant.
 6. Backend zapisuje dane w PostgreSQL.
 7. Frontend otrzymuje tylko dane niezbędne do wyświetlenia.
 
-Nie używaj bezpośredniego zapisu z przeglądarki do tabel `orders`, `order_items`, `payments`, `payment_events` ani do operacji administracyjnych.
+Katalog, dane klienta, koszyk, zamówienia i płatności są odczytywane przez Express. RLS jest dodatkową warstwą, bo klucz `anon` i tak jest w przeglądarce przy Supabase Auth. `service_role` omija RLS, dlatego backend sam sprawdza właściciela zasobu i rolę.
+
+Nie używaj bezpośredniego zapisu z przeglądarki do tabel `orders`, `order_items`, `payments`, `payment_events`, `user_roles` ani do operacji administracyjnych. Koszyk gościa jest identyfikowany ciasteczkiem `httpOnly`; surowy identyfikator sesji nie trafia do bazy.
+
+Checkout liczy kwoty z katalogu. Przy `seller_tax_status = unknown` zamówienie nie powstaje. Na MVP Express odrzuca walutę inną niż `PLN`, ale schemat jej do `PLN` nie więzi. Waluta i kwota brutto zamówienia oraz płatności zostają takie, jakie były w chwili checkoutu.
 
 ## 4. Proponowana struktura monorepo
 
@@ -79,7 +83,7 @@ shop/
 - `payments`: inicjowanie płatności, webhooki, zwroty i rejestrowanie zdarzeń.
 - `admin`: operacje administracyjne i dashboard.
 - `notifications`: e-maile transakcyjne.
-- `settings`: konfiguracja sklepu.
+- `settings`: ustawienia niefiskalne w `store_settings` oraz status podatkowy sprzedawcy w `shop_profile`.
 
 Każdy moduł powinien mieć tylko te warstwy, które faktycznie są potrzebne. Zalecany wzorzec dla modułu o większej złożoności:
 - `*.routes.js`
@@ -122,10 +126,16 @@ Nie implementuj jeszcze logiki dostawy, rezerwacji terminów ani galerii klienta
 Nie dodawaj `store_id` i wielosklepowości do wszystkich tabel bez decyzji o budowie SaaS. Jeśli kierunek multi-tenant zostanie potwierdzony, należy zaprojektować izolację danych, role i RLS jako osobny etap architektoniczny.
 
 ## 9. Decyzje wymagające zatwierdzenia
-Przed implementacją produkcyjną należy zatwierdzić:
-- operatora płatności i jego środowisko testowe;
-- czy zakup gościnny jest dozwolony;
+Ustalone dla schematu i MVP:
+
+- zakup gościnny jest dozwolony; historia konta obejmuje zamówienia złożone po zalogowaniu;
+- model cen, waluty i VAT opisany w `docs/DATABASE.md`;
+- jeden produkt ma jedną kategorię; typy to `physical`, `digital` i `service`;
+- na MVP nie ma dostaw, wariantów, faktur, kuponów, rezerwacji ani wielu sklepów.
+
+Przed implementacją produkcyjną nadal należy zatwierdzić:
+
+- operatora płatności (`przelewy24` albo `stripe`) i jego środowisko testowe;
 - sposób realizacji usług i produktów cyfrowych;
-- reguły VAT i dokumentów sprzedaży;
-- retencję danych i politykę prywatności;
+- dokumenty sprzedaży, moment obowiązku podatkowego i retencję danych;
 - hosting API, frontendu i Supabase.
