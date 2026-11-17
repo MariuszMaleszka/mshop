@@ -1,4 +1,5 @@
 import express from 'express'
+import { HttpError } from './http/errors.js'
 import { errorHandler, notFoundHandler } from './http/error-handler.js'
 import { createLogger } from './http/logger.js'
 import { requestContext } from './http/request-context.js'
@@ -40,6 +41,23 @@ export function createApp(config, options = {}) {
   app.get('/api/v1/health', (_req, res) => {
     res.status(200).json({
       data: { status: 'ok' },
+      meta: {},
+    })
+  })
+
+  app.get('/api/v1/health/ready', async (_req, res) => {
+    const ready = options.database ? await options.database.checkConnection() : false
+
+    if (!ready) {
+      throw new HttpError({
+        status: 503,
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Service unavailable',
+      })
+    }
+
+    res.status(200).json({
+      data: { status: 'ready' },
       meta: {},
     })
   })

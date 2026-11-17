@@ -1,6 +1,6 @@
 # Kontrakty REST API — wersja robocza
 
-Zaimplementowany jest tylko `GET /api/v1/health`. Pozostałe endpointy w tym dokumencie są planowane. Nie są jeszcze dostępne w Express.
+Zaimplementowane są `GET /api/v1/health` i `GET /api/v1/health/ready`. Pozostałe endpointy w tym dokumencie są planowane. Nie są jeszcze dostępne w Express.
 
 ## 1. Konwencje
 - Prefix: `/api/v1`
@@ -44,6 +44,19 @@ Błąd:
   "meta": {}
 }
 ```
+
+- `GET /api/v1/health/ready` — sprawdzenie, że wspólna pula PostgreSQL wykonuje `SELECT 1`. Nie wymaga autoryzacji. Nie zwraca szczegółów bazy.
+
+Dostępna baza:
+
+```json
+{
+  "data": { "status": "ready" },
+  "meta": {}
+}
+```
+
+Niedostępna baza: HTTP 503 i kod `SERVICE_UNAVAILABLE`.
 
 ## 4. Publiczny katalog
 Planowane:

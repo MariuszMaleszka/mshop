@@ -52,10 +52,11 @@ Acceptance spełnione dla sześciu migracji:
 Jeszcze otwarte: seed nie zawiera sekretów ani nadania roli `admin` przez rejestrację, bo seeda demonstracyjnego nie ma.
 
 ## Phase 3 — Authentication & authorization
-Konfiguracja środowiska API oraz wspólna obsługa błędów HTTP są ukończone. Pozostałe zadania tej fazy nie są rozpoczęte.
+Konfiguracja środowiska API, obsługa błędów HTTP i pula PostgreSQL są ukończone. Pozostałe zadania tej fazy nie są rozpoczęte.
 
 - [x] Scentralizować konfigurację API i walidować zmienne środowiskowe przez Zod.
 - [x] Ujednolicić błędy HTTP, identyfikator żądania i logowanie bez sekretów.
+- [x] Dodać pulę `pg`, zamknięcie procesu i `GET /api/v1/health/ready`.
 - [ ] Skonfigurować Supabase Auth.
 - [ ] Rejestracja/logowanie e-mail.
 - [ ] Google OAuth.

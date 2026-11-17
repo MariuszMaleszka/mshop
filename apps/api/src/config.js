@@ -17,6 +17,9 @@ const envSchema = z
     PORT: z.string().optional(),
     WEB_ORIGIN: z.string().optional(),
     DATABASE_URL: z.string().optional(),
+    DATABASE_POOL_MAX: z.string().optional(),
+    DATABASE_CONNECTION_TIMEOUT_MS: z.string().optional(),
+    DATABASE_IDLE_TIMEOUT_MS: z.string().optional(),
     SUPABASE_URL: z.string().optional(),
     SUPABASE_ANON_KEY: z.string().optional(),
     SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
@@ -38,6 +41,9 @@ function readEnv(env) {
     PORT: blankToUndefined(env?.PORT),
     WEB_ORIGIN: blankToUndefined(env?.WEB_ORIGIN),
     DATABASE_URL: blankToUndefined(env?.DATABASE_URL),
+    DATABASE_POOL_MAX: blankToUndefined(env?.DATABASE_POOL_MAX),
+    DATABASE_CONNECTION_TIMEOUT_MS: blankToUndefined(env?.DATABASE_CONNECTION_TIMEOUT_MS),
+    DATABASE_IDLE_TIMEOUT_MS: blankToUndefined(env?.DATABASE_IDLE_TIMEOUT_MS),
     SUPABASE_URL: blankToUndefined(env?.SUPABASE_URL),
     SUPABASE_ANON_KEY: blankToUndefined(env?.SUPABASE_ANON_KEY),
     SUPABASE_SERVICE_ROLE_KEY: blankToUndefined(env?.SUPABASE_SERVICE_ROLE_KEY),
@@ -75,6 +81,24 @@ function addIssue(ctx, field, reason) {
       ? `Invalid configuration: ${field} ${reason}`
       : `Invalid configuration: ${field}`,
   })
+}
+
+function readBoundedInt(value, field, { fallback, min, max }, ctx) {
+  const raw = value ?? String(fallback)
+
+  if (!/^[0-9]+$/.test(raw)) {
+    addIssue(ctx, field)
+    return null
+  }
+
+  const parsed = Number(raw)
+
+  if (parsed < min || parsed > max) {
+    addIssue(ctx, field)
+    return null
+  }
+
+  return parsed
 }
 
 function readPort(value, ctx) {
@@ -221,6 +245,24 @@ const configSchema = envSchema.transform((env, ctx) => {
   const port = readPort(env.PORT, ctx)
   const webOrigin = readOrigin(env.WEB_ORIGIN, resolvedEnv, ctx)
   const databaseUrl = readDatabaseUrl(env.DATABASE_URL, resolvedEnv, ctx)
+  const databasePoolMax = readBoundedInt(
+    env.DATABASE_POOL_MAX,
+    'DATABASE_POOL_MAX',
+    { fallback: 10, min: 1, max: 20 },
+    ctx,
+  )
+  const databaseConnectionTimeoutMs = readBoundedInt(
+    env.DATABASE_CONNECTION_TIMEOUT_MS,
+    'DATABASE_CONNECTION_TIMEOUT_MS',
+    { fallback: 5000, min: 100, max: 30000 },
+    ctx,
+  )
+  const databaseIdleTimeoutMs = readBoundedInt(
+    env.DATABASE_IDLE_TIMEOUT_MS,
+    'DATABASE_IDLE_TIMEOUT_MS',
+    { fallback: 10000, min: 1000, max: 120000 },
+    ctx,
+  )
   const supabaseUrl = readSupabaseUrl(env.SUPABASE_URL, resolvedEnv, ctx)
   const supabaseAnonKey = readOptionalSecret(
     env.SUPABASE_ANON_KEY,
@@ -240,6 +282,9 @@ const configSchema = envSchema.transform((env, ctx) => {
     port: port ?? 3001,
     webOrigin: webOrigin ?? 'http://localhost:3000',
     databaseUrl,
+    databasePoolMax: databasePoolMax ?? 10,
+    databaseConnectionTimeoutMs: databaseConnectionTimeoutMs ?? 5000,
+    databaseIdleTimeoutMs: databaseIdleTimeoutMs ?? 10000,
     supabaseUrl,
     supabaseAnonKey,
     supabaseServiceRoleKey,

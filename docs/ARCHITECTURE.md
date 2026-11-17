@@ -26,7 +26,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check. Logik
 - logika katalogu, koszyka, zamówień, płatności, waluty i podatku;
 - konfiguracja w `apps/api/src/config.js`, walidowana raz przy starcie przez Zod; proces nie ładuje pliku `.env` sam;
 - błędy HTTP przechodzą przez jedno middleware; logi nie zawierają nagłówków, body, query stringu ani sekretów;
-- dostęp do PostgreSQL jest planowany przez serwerowy `DATABASE_URL`, bez Supabase SDK; połączenia jeszcze nie ma;
+- dostęp do PostgreSQL idzie przez jedną pulę `pg` i serwerowy `DATABASE_URL`, bez Supabase SDK i bez ORM;
 - klucz `service_role` zostaje sekretem serwerowym i nie jest potrzebny, dopóki nie ma Storage albo administracyjnego API Auth;
 - integracje z operatorem płatności i dostawcą e-mail, jeszcze niepodłączone.
 
@@ -46,7 +46,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check. Logik
 6. Backend zapisuje dane w PostgreSQL.
 7. Frontend otrzymuje tylko dane niezbędne do wyświetlenia.
 
-Katalog, dane klienta, koszyk, zamówienia i płatności mają być odczytywane przez Express. RLS jest dodatkową warstwą, bo klucz `anon` i tak jest w przeglądarce przy Supabase Auth. Nie zastępuje weryfikacji tokenu ani sprawdzenia właściciela i roli. `service_role` omija RLS, dlatego backend sam sprawdza właściciela zasobu i rolę. Sekretu `service_role` nie wolno umieszczać we frontendzie.
+Katalog, dane klienta, koszyk, zamówienia i płatności mają być odczytywane przez Express. RLS jest dodatkową warstwą, bo klucz `anon` i tak jest w przeglądarce przy Supabase Auth. Nie zastępuje weryfikacji tokenu ani sprawdzenia właściciela i roli. Połączenie `pg` używa roli z `DATABASE_URL`. Na lokalnej bazie jest to zwykle `postgres`, które omija RLS tak samo jak `service_role`. Dlatego każde przyszłe zapytanie o zasób użytkownika musi mieć warunek właściciela w Express. Osobnej roli bazy o węższych uprawnieniach jeszcze nie ma: wymagałaby migracji i nadania praw do istniejących tabel. Sekretu `service_role` nie wolno umieszczać we frontendzie.
 
 Nie używaj bezpośredniego zapisu z przeglądarki do tabel `orders`, `order_items`, `payments`, `payment_events`, `idempotency_keys`, `user_roles` ani do operacji administracyjnych. Koszyk gościa jest identyfikowany ciasteczkiem `httpOnly`; surowy identyfikator sesji nie trafia do bazy.
 
