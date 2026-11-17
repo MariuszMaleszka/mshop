@@ -52,7 +52,7 @@ Acceptance spełnione dla sześciu migracji:
 Jeszcze otwarte: seed nie zawiera sekretów ani nadania roli `admin` przez rejestrację, bo seeda demonstracyjnego nie ma.
 
 ## Phase 3 — Authentication & authorization
-Konfiguracja środowiska API, obsługa błędów HTTP i pula PostgreSQL są ukończone. Pozostałe zadania tej fazy nie są rozpoczęte.
+Konfiguracja środowiska API, obsługa błędów HTTP, pula PostgreSQL i weryfikacja JWT są ukończone. Logowanie, sesja Nuxt i role nie są rozpoczęte.
 
 - [x] Scentralizować konfigurację API i walidować zmienne środowiskowe przez Zod.
 - [x] Ujednolicić błędy HTTP, identyfikator żądania i logowanie bez sekretów.
@@ -64,7 +64,7 @@ Konfiguracja środowiska API, obsługa błędów HTTP i pula PostgreSQL są uko�
 - [ ] Odzyskiwanie hasła.
 - [ ] Sesja w Nuxt.
 - [ ] Middleware UI.
-- [ ] Weryfikacja JWT w Express.
+- [x] Weryfikacja JWT w Express.
 - [ ] Rola `admin` w `user_roles` i ochrona endpointów. Brak wiersza oznacza klienta.
 
 Acceptance:

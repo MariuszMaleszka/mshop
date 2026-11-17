@@ -38,6 +38,10 @@ export function createApp(config, options = {}) {
   app.use(cors(config.webOrigin))
   app.use(requestContext(logger))
 
+  if (options.accessTokens) {
+    app.locals.accessTokens = options.accessTokens
+  }
+
   app.get('/api/v1/health', (_req, res) => {
     res.status(200).json({
       data: { status: 'ok' },

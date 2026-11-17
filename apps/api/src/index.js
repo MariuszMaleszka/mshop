@@ -1,3 +1,4 @@
+import { createAccessTokenVerifier } from './auth/tokens.js'
 import { createApp } from './app.js'
 import { loadConfig } from './config.js'
 import { createDatabase } from './db/pool.js'
@@ -22,7 +23,10 @@ const database = createDatabase({
   idleTimeoutMs: config.databaseIdleTimeoutMs,
   logger,
 })
-const app = createApp(config, { logger, database })
+const accessTokens = createAccessTokenVerifier({
+  supabaseUrl: config.supabaseUrl,
+})
+const app = createApp(config, { logger, database, accessTokens })
 const server = app.listen(config.port, () => {
   logger.info(`API listening on port ${config.port}`)
 })

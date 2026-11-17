@@ -5,7 +5,7 @@ Zaimplementowane są `GET /api/v1/health` i `GET /api/v1/health/ready`. Pozosta�
 ## 1. Konwencje
 - Prefix: `/api/v1`
 - JSON request/response.
-- Chronione endpointy: `Authorization: Bearer <Supabase access token>`.
+- Przyszłe chronione endpointy: `Authorization: Bearer <Supabase access token>`. Express weryfikuje podpis przez JWKS Supabase Auth. Token nie jest logowany.
 - Daty w ISO 8601 UTC.
 - Kwoty jako integer w najmniejszej jednostce waluty. Dla PLN `12900` = 129,00 PLN.
 - Waluta jako kod ISO 4217. Na MVP Express przyjmuje wyłącznie `PLN`.
@@ -57,6 +57,27 @@ Dostępna baza:
 ```
 
 Niedostępna baza: HTTP 503 i kod `SERVICE_UNAVAILABLE`.
+
+## Uwierzytelnianie
+Logowanie, rejestracja i odświeżanie sesji należą do Supabase Auth. Express sprawdza access token tylko na trasach, które dostaną middleware `requireAuth`. To middleware nie jest globalne.
+
+Poprawny token udostępnia `req.auth.userId` równe claimowi `sub`. Sprawdzane są podpis, algorytm `ES256` albo `RS256`, issuer `{SUPABASE_URL}/auth/v1`, audience `authenticated`, `exp` i UUID w `sub`.
+
+Brak nagłówka `Authorization` albo token odrzucony:
+
+- HTTP 401
+- kod `UNAUTHORIZED`
+- komunikat `Authentication required`
+
+Odpowiedź nie zawiera przyczyny kryptograficznej, adresu JWKS ani treści tokenu.
+
+Gdy nie da się pobrać kluczy publicznych:
+
+- HTTP 503
+- kod `SERVICE_UNAVAILABLE`
+- komunikat `Service unavailable`
+
+Awaria JWKS nie jest zgłaszana jako błąd tokenu. `GET /api/v1/health` i `GET /api/v1/health/ready` nie wymagają nagłówka `Authorization`.
 
 ## 4. Publiczny katalog
 Planowane:
