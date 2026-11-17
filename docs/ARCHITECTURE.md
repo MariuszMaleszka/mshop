@@ -24,7 +24,10 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check. Logik
 - weryfikacja tokenów Supabase;
 - autoryzacja ról; brak wiersza w `user_roles` oznacza klienta, wiersz `admin` nadaje tylko serwer;
 - logika katalogu, koszyka, zamówień, płatności, waluty i podatku;
-- dostęp do PostgreSQL przez `service_role`, bez Supabase SDK w obecnym zakresie projektu;
+- konfiguracja w `apps/api/src/config.js`, walidowana raz przy starcie przez Zod; proces nie ładuje pliku `.env` sam;
+- błędy HTTP przechodzą przez jedno middleware; logi nie zawierają nagłówków, body, query stringu ani sekretów;
+- dostęp do PostgreSQL jest planowany przez serwerowy `DATABASE_URL`, bez Supabase SDK; połączenia jeszcze nie ma;
+- klucz `service_role` zostaje sekretem serwerowym i nie jest potrzebny, dopóki nie ma Storage albo administracyjnego API Auth;
 - integracje z operatorem płatności i dostawcą e-mail, jeszcze niepodłączone.
 
 ### Supabase

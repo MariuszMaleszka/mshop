@@ -12,6 +12,7 @@ Zaimplementowany jest tylko `GET /api/v1/health`. Pozostałe endpointy w tym dok
 - Cena w żądaniu klienta nie jest źródłem prawdy. Checkout bierze kwotę należną, walutę i podatek z katalogu.
 - Błędy mają wspólny format.
 - Nie zwracaj stack trace ani danych dostawców płatności.
+- Każda odpowiedź ma nagłówek `X-Request-Id` nadany przez API. Identyfikator przesłany przez klienta nie jest używany. Nie wchodzi do treści JSON.
 
 ## 2. Format odpowiedzi
 

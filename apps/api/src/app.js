@@ -1,14 +1,10 @@
 import express from 'express'
+import { errorHandler, notFoundHandler } from './http/error-handler.js'
+import { createLogger } from './http/logger.js'
+import { requestContext } from './http/request-context.js'
 
-const DEFAULT_WEB_ORIGIN = 'http://localhost:3000'
-
-export function createApp() {
-  const app = express()
-  const webOrigin = process.env.WEB_ORIGIN || DEFAULT_WEB_ORIGIN
-
-  app.disable('x-powered-by')
-  app.use(express.json())
-  app.use((req, res, next) => {
+function cors(webOrigin) {
+  return function corsMiddleware(req, res, next) {
     if (req.headers.origin === webOrigin) {
       res.setHeader('Access-Control-Allow-Origin', webOrigin)
       res.setHeader('Vary', 'Origin')
@@ -20,6 +16,7 @@ export function createApp() {
         'Access-Control-Allow-Headers',
         'Content-Type, Authorization',
       )
+      res.setHeader('Access-Control-Expose-Headers', 'X-Request-Id')
     }
 
     if (req.method === 'OPTIONS') {
@@ -28,7 +25,17 @@ export function createApp() {
     }
 
     next()
-  })
+  }
+}
+
+export function createApp(config, options = {}) {
+  const app = express()
+  const logger = options.logger ?? createLogger({ nodeEnv: config.nodeEnv })
+
+  app.disable('x-powered-by')
+  app.use(express.json())
+  app.use(cors(config.webOrigin))
+  app.use(requestContext(logger))
 
   app.get('/api/v1/health', (_req, res) => {
     res.status(200).json({
@@ -37,43 +44,12 @@ export function createApp() {
     })
   })
 
-  app.use((_req, res) => {
-    res.status(404).json({
-      error: {
-        code: 'NOT_FOUND',
-        message: 'Resource not found',
-        details: [],
-      },
-    })
-  })
+  if (typeof options.registerRoutes === 'function') {
+    options.registerRoutes(app)
+  }
 
-  app.use((err, _req, res, next) => {
-    if (res.headersSent) {
-      next(err)
-      return
-    }
-
-    if (err?.type === 'entity.parse.failed') {
-      res.status(400).json({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Request validation failed',
-          details: [],
-        },
-      })
-      return
-    }
-
-    console.error('Unhandled API error')
-
-    res.status(500).json({
-      error: {
-        code: 'INTERNAL_ERROR',
-        message: 'Internal server error',
-        details: [],
-      },
-    })
-  })
+  app.use(notFoundHandler)
+  app.use(errorHandler(logger))
 
   return app
 }
