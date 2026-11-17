@@ -1,6 +1,6 @@
 # Kontrakty REST API — wersja robocza
 
-Zaimplementowany jest tylko `GET /health`. Pozostałe endpointy w tym dokumencie są planowane. Nie są jeszcze dostępne w Express.
+Zaimplementowany jest tylko `GET /api/v1/health`. Pozostałe endpointy w tym dokumencie są planowane. Nie są jeszcze dostępne w Express.
 
 ## 1. Konwencje
 - Prefix: `/api/v1`
@@ -35,7 +35,7 @@ Błąd:
 ```
 
 ## 3. Health
-- `GET /health` — sprawdzenie, że proces API działa. Nie wymaga autoryzacji.
+- `GET /api/v1/health` — sprawdzenie, że proces API działa. Nie wymaga autoryzacji.
 
 ```json
 {
