@@ -1,0 +1,15 @@
+---
+description: Supabase and database rules
+globs: supabase/**
+alwaysApply: false
+---
+
+- Follow docs/DATABASE.md and AGENTS.md.
+- All schema changes must be committed as SQL migrations.
+- Enable RLS for tables exposed to client access.
+- Add policies for anon, authenticated customer, and admin as appropriate.
+- Never allow users to grant themselves admin privileges.
+- Remember service_role bypasses RLS; backend authorization remains mandatory.
+- Preserve order and payment snapshots.
+- Do not use floating-point types for money.
+- Include indexes and constraints where justified.

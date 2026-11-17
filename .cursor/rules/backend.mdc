@@ -1,0 +1,15 @@
+---
+description: Express backend rules
+globs: apps/api/**
+alwaysApply: false
+---
+
+- Follow docs/ARCHITECTURE.md, docs/API.md, and AGENTS.md.
+- Keep controllers thin; put business rules in services.
+- Validate params, query, and body.
+- Verify Supabase access tokens on protected routes.
+- Check resource ownership and roles on every protected operation.
+- Treat payment webhooks as untrusted until verified.
+- Make checkout and webhook processing idempotent.
+- Never trust prices, totals, roles, or payment statuses supplied by the client.
+- Never return raw database errors or stack traces.

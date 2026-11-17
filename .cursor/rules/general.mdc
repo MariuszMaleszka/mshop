@@ -1,0 +1,14 @@
+---
+description: General project rules
+alwaysApply: true
+---
+
+- Read the root AGENTS.md before making changes.
+- Use JavaScript only; do not introduce TypeScript.
+- Keep changes limited to the assigned task.
+- Do not add dependencies without explaining why.
+- Do not invent requirements; ask when a decision is necessary.
+- Validate untrusted input.
+- Never expose secrets or sensitive data.
+- Update docs when API or database contracts change.
+- Present a plan before broad or cross-module changes.
