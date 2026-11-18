@@ -18,7 +18,7 @@ Aplikacja jest w JavaScript, bez TypeScriptu w kodzie źródłowym. Działa szki
 - zarządzanie sesją Supabase Auth.
 
 ### `apps/api` — Express 5
-API jest w JavaScript, w modułach ES. Zaimplementowany jest health check. Logika katalogu, koszyka, zamówień i płatności jest planowana.
+API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publiczny odczyt katalogu i koszyk gościa. Zamówienia i płatności są planowane.
 
 - REST API;
 - weryfikacja access tokenu Supabase biblioteką `jose` i publicznym JWKS; podpis, `iss`, `aud`, `exp` i UUID w `sub` są sprawdzane, a `req.auth.userId` dostaje dopiero zweryfikowany `sub`;
@@ -84,12 +84,12 @@ shop/
 
 ## 5. Moduły domenowe backendu
 
-Poniższy podział jest docelowy. Zaimplementowany jest publiczny odczyt katalogu. Pozostałe moduły nie są jeszcze zaimplementowane.
+Poniższy podział jest docelowy. Zaimplementowany jest publiczny odczyt katalogu i koszyk gościa. Pozostałe moduły nie są jeszcze zaimplementowane.
 
 - `auth`: weryfikacja tożsamości i kontekst użytkownika; bez implementowania własnego systemu haseł.
 - `customers`: profile, typ klienta, adresy.
 - `catalog`: publiczny odczyt aktywnych kategorii i produktów przez `pg`. Zapytania jawnie filtrują `is_active = true`, bo rola z `DATABASE_URL` może omijać RLS. Szczegóły są po UUID. Nieaktywna kategoria nie zmienia wiersza produktu; w odpowiedzi szczegółów `category_id` jest wtedy `null`. Zapis, media i panel administratora nie są zaimplementowane.
-- `cart`: koszyk nie jest jeszcze zaimplementowany. Sesja gościa to ciasteczko `shop_guest_session` ustawiane wyłącznie przez `POST /api/v1/session/guest`. Surowy identyfikator zostaje w ciasteczku. Przyszły zapis użyje tylko `hashGuestSessionId`, czyli SHA-256 tej wartości.
+- `cart`: koszyk gościa jest odczytywany i zmieniany przez `GET /api/v1/cart` oraz `POST`, `PATCH` i `DELETE` na `/api/v1/cart/items`. Sesja gościa to ciasteczko `shop_guest_session` ustawiane wyłącznie przez `POST /api/v1/session/guest`. Surowy identyfikator zostaje w ciasteczku. Zapis koszyka używa tylko `hashGuestSessionId`, czyli SHA-256 tej wartości. Cena zostaje w katalogu. Dodanie i zmiana ilości idą jedną transakcją połączenia: koszyk jest blokowany, a kwota pozycji i suma są sprawdzane jako `bigint` przed zapisem. Kwota spoza bezpiecznego integera JavaScriptu daje HTTP 400 i wycofanie zapisu. Koszyk konta i łączenie koszyków nie są zaimplementowane.
 - `checkout`: walidacja danych i utworzenie zamówienia.
 - `orders`: odczyt, statusy i historia zamówień.
 - `payments`: inicjowanie płatności, webhooki, zwroty i rejestrowanie zdarzeń w `payment_events`. Powtórzenia żądań HTTP obsługuje `idempotency_keys`, nie ta tabela.

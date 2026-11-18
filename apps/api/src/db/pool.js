@@ -19,6 +19,9 @@ export function createDatabase({
       async query() {
         throw new Error('Database is not configured')
       },
+      async withTransaction() {
+        throw new Error('Database is not configured')
+      },
       async checkConnection() {
         return false
       },
@@ -41,15 +44,39 @@ export function createDatabase({
 
   return {
     async query(text, params = []) {
-      if (typeof text !== 'string' || text.trim() === '') {
-        throw new TypeError('Query text is required')
+      return runQuery(pool, text, params)
+    },
+
+    async withTransaction(work) {
+      if (typeof work !== 'function') {
+        throw new TypeError('Transaction work is required')
       }
 
-      if (!Array.isArray(params)) {
-        throw new TypeError('Query parameters must be an array')
-      }
+      const client = await pool.connect()
 
-      return pool.query(text, params)
+      try {
+        await client.query('BEGIN')
+
+        try {
+          const result = await work({
+            query(text, params = []) {
+              return runQuery(client, text, params)
+            },
+          })
+          await client.query('COMMIT')
+          return result
+        } catch (error) {
+          try {
+            await client.query('ROLLBACK')
+          } catch {
+            // The caller receives the original transaction error.
+          }
+
+          throw error
+        }
+      } finally {
+        client.release()
+      }
     },
 
     async checkConnection() {
@@ -71,4 +98,16 @@ export function createDatabase({
       await pool.end()
     },
   }
+}
+
+function runQuery(target, text, params) {
+  if (typeof text !== 'string' || text.trim() === '') {
+    throw new TypeError('Query text is required')
+  }
+
+  if (!Array.isArray(params)) {
+    throw new TypeError('Query parameters must be an array')
+  }
+
+  return target.query(text, params)
 }

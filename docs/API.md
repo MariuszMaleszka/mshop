@@ -1,6 +1,6 @@
 # Kontrakty REST API — wersja robocza
 
-Zaimplementowane są `GET /api/v1/health`, `GET /api/v1/health/ready`, publiczny odczyt aktywnych kategorii i produktów oraz `POST /api/v1/session/guest`. Pozostałe endpointy w tym dokumencie są planowane. Nie są jeszcze dostępne w Express.
+Zaimplementowane są `GET /api/v1/health`, `GET /api/v1/health/ready`, publiczny odczyt aktywnych kategorii i produktów, `POST /api/v1/session/guest` oraz koszyk gościa: `GET /api/v1/cart`, `POST /api/v1/cart/items`, `PATCH /api/v1/cart/items/:id` i `DELETE /api/v1/cart/items/:id`. Pozostałe endpointy w tym dokumencie są planowane. Nie są jeszcze dostępne w Express.
 
 ## 1. Konwencje
 - Prefix: `/api/v1`
@@ -190,18 +190,50 @@ Odpowiedź:
 
 Ciasteczko jest `HttpOnly`, `SameSite=Lax`, `Path=/`, bez `Domain`, z czasem życia 30 dni. W produkcji ma atrybut `Secure`. Wartość to 64 znaki hex z 32 losowych bajtów. Brak ciasteczka, niepoprawny format albo więcej niż jedno wystąpienie `shop_guest_session` powoduje nowe losowanie. Przy duplikatach nie jest wybierana żadna z przesłanych wartości, także gdy są identyczne. Poprawna, pojedyncza wartość zostaje, a czas życia jest ustawiany od nowa.
 
-Surowy identyfikator jest tylko w ciasteczku. SHA-256 tego identyfikatora, zapisany jako 64 znaki hex, będzie jedyną postacią w przyszłym koszyku i w `carts.session_id`. Ten endpoint nie tworzy wiersza koszyka i nie zwraca identyfikatora ani skrótu.
+Surowy identyfikator jest tylko w ciasteczku. SHA-256 tego identyfikatora, zapisany jako 64 znaki hex, jest jedyną postacią w koszyku gościa i w `carts.session_id`. Ten endpoint nie tworzy wiersza koszyka i nie zwraca identyfikatora ani skrótu.
 
 Żądanie z Nuxt do API jest cross-origin. Przeglądarka zapisze i odeśle ciasteczko dopiero wtedy, gdy klient wyśle `credentials: 'include'`, a API doda `Access-Control-Allow-Credentials`. Obecny CORS tego nie włącza.
 
 ## 6. Koszyk
-Planowane:
-- `GET /cart` — pobranie koszyka.
-- `POST /cart/items` — dodanie pozycji.
-- `PATCH /cart/items/:id` — zmiana ilości.
-- `DELETE /cart/items/:id` — usunięcie pozycji.
+Zaimplementowany jest koszyk gościa. Koszyk konta i łączenie koszyków pozostają planowane.
 
-Koszyk konta jest powiązany z użytkownikiem z tokenu. Koszyk gościa jest powiązany z nieprzewidywalnym ciasteczkiem `httpOnly`; baza przechowuje skrót tego sekretu. Właściciel jest jeden. Jeden właściciel ma jeden koszyk aktywny.
+Wymagane jest poprawne, pojedyncze ciasteczko `shop_guest_session`. Brak ciasteczka, zły format albo więcej niż jedno wystąpienie dają HTTP 401 `UNAUTHORIZED`. Te endpointy nie losują nowej sesji. Surowy identyfikator i jego skrót nie wracają w JSON ani w logu.
+
+Cena pozycji nie jest zapisywana. Odpowiedź bierze aktualne `products.price_amount` i walutę. Wartość pozycji to cena jednostkowa razy ilość, na liczbach całkowitych. `total_amount` sumuje pozycje w `PLN`. Pola ceny, waluty, `session_id` i `user_id` przesłane przez klienta są ignorowane.
+
+- `GET /api/v1/cart` — koszyk bieżącej sesji. Brak wiersza `carts` daje pustą listę i `total_amount: 0`, bez błędu.
+- `POST /api/v1/cart/items` — dodanie produktu. Body: `productId` (UUID) i `quantity` (dodatni integer, najwyżej 2147483647). Produkt nieaktywny albo nieistniejący daje HTTP 404 `NOT_FOUND`. Waluta inna niż `PLN` daje HTTP 400 `VALIDATION_ERROR`. Ten sam produkt w koszyku zwiększa ilość. Przekroczenie zakresu `integer` albo kwoty, której nie da się oddać jako bezpieczny integer JavaScriptu, daje HTTP 400. Zapis jest wtedy wycofywany.
+- `PATCH /api/v1/cart/items/:id` — ustawienie ilości własnej pozycji. Body: `quantity`. Cudza albo nieistniejąca pozycja daje HTTP 404.
+- `DELETE /api/v1/cart/items/:id` — usunięcie własnej pozycji. Cudza albo nieistniejąca pozycja daje HTTP 404.
+
+Sukces tych czterech endpointów to HTTP 200 i aktualny koszyk:
+
+```json
+{
+  "data": {
+    "currency": "PLN",
+    "items": [
+      {
+        "id": "66666666-6666-4666-8666-666666666666",
+        "product_id": "44444444-4444-4444-8444-444444444444",
+        "name": "Session",
+        "price_amount": 12900,
+        "currency": "PLN",
+        "quantity": 2,
+        "line_amount": 25800
+      }
+    ],
+    "total_amount": 25800
+  },
+  "meta": {}
+}
+```
+
+Błąd bazy daje HTTP 503 `SERVICE_UNAVAILABLE` bez treści SQL. Kwota poza kontraktem liczbowym API daje HTTP 400 `VALIDATION_ERROR` ze ścieżką `total_amount`, także na `GET`. To nie jest awaria bazy.
+
+Własność jest w zapytaniu: aktywny koszyk z `user_id` pustym i `session_id` równym skrótowi ciasteczka. Utworzenie koszyka używa `INSERT ... ON CONFLICT DO NOTHING`, a potem osobnego `SELECT ... FOR UPDATE` na tym samym połączeniu. Drugie polecenie ma nową migawkę, więc widzi koszyk utworzony przez równoległe żądanie. `updated_at` koszyka nie jest przy tym ruszane. Pozycja używa unikalności `(cart_id, product_id)` i dodaje ilość. Suma kwot jest liczona na `bigint` pod blokadą koszyka, zanim pozycja zostanie zapisana. Równoległe dodania różnych produktów czekają na tę samą blokadę.
+
+Koszyk konta będzie powiązany z użytkownikiem z tokenu. Właściciel jest jeden. Jeden właściciel ma jeden koszyk aktywny.
 
 Po zalogowaniu Express łączy koszyk gościa z koszykiem konta: przepisuje sam koszyk gościa albo sumuje ilości i porzuca koszyk gościa. Cena pozycji koszyka nie jest utrwalana jako cena sprzedaży.
 

@@ -103,13 +103,13 @@ Acceptance:
 - pliki mają prawidłowe uprawnienia.
 
 ## Phase 6 — Cart & checkout
-Ciasteczko sesji gościa jest ukończone. Koszyk, łączenie z kontem i checkout nie są rozpoczęte.
+Ciasteczko sesji gościa i API koszyka gościa są ukończone. Koszyk konta, łączenie z kontem i checkout nie są rozpoczęte.
 
-- [x] Ustawiać ciasteczko `shop_guest_session` i liczyć skrót SHA-256. Wiersz `carts` jeszcze nie powstaje.
-- [ ] Koszyk gościa identyfikowany ciasteczkiem `httpOnly`; w bazie tylko skrót sekretu.
+- [x] Ustawiać ciasteczko `shop_guest_session` i liczyć skrót SHA-256. Wiersz `carts` powstaje przy pierwszej pozycji gościa.
+- [x] Koszyk gościa identyfikowany ciasteczkiem `httpOnly`; w bazie tylko skrót sekretu.
 - [ ] Koszyk zalogowanego klienta i jeden aktywny koszyk na właściciela.
 - [ ] Połączenie koszyka gościa z koszykiem konta po zalogowaniu.
-- [ ] Dodawanie/usuwanie/zmiana ilości.
+- [x] Dodawanie, usuwanie i zmiana ilości w koszyku gościa. Koszyk konta nadal nie ma tych operacji.
 - [ ] Ponowna walidacja kwoty, dostępności i zgodności waluty.
 - [ ] Checkout zablokowany przy `seller_tax_status = unknown`.
 - [ ] Snapshot danych klienta, katalogu podatkowego i podatku zastosowanego.
