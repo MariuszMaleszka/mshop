@@ -10,7 +10,9 @@ import {
   addAccountCartItem,
   addGuestCartItem,
   CartAmountError,
+  CartMergeError,
   deleteAccountCartItem,
+  mergeGuestCart,
   deleteGuestCartItem,
   findAccountCart,
   findGuestCart,
@@ -85,6 +87,32 @@ export function registerCartRoutes(app, { database } = {}) {
       }
 
       const data = await readCart(() => findCart(database, req))
+      res.status(200).json({ data, meta: {} })
+    },
+  )
+
+  app.post(
+    '/api/v1/cart/merge',
+    (req, res, next) => {
+      const authenticate = requireAuth(req.app.locals.accessTokens)
+      return authenticate(req, res, next)
+    },
+    async (req, res) => {
+      const sessionId = readGuestSessionId(req.get('cookie'))
+
+      if (sessionId) {
+        await readCart(() =>
+          mergeGuestCart(
+            database,
+            req.auth.userId,
+            hashGuestSessionId(sessionId),
+          ),
+        )
+      }
+
+      const data = await readCart(() =>
+        findAccountCart(database, req.auth.userId),
+      )
       res.status(200).json({ data, meta: {} })
     },
   )
@@ -231,6 +259,12 @@ async function readCart(read) {
       throw amountOverflow()
     }
 
+    if (error instanceof CartMergeError) {
+      throw error.reason === 'quantity'
+        ? quantityOverflow()
+        : currencyRejected()
+    }
+
     throw new HttpError({
       status: 503,
       code: 'SERVICE_UNAVAILABLE',
@@ -238,6 +272,23 @@ async function readCart(read) {
       logMessage: 'cart.query_failed',
     })
   }
+}
+
+function currencyRejected() {
+  return new HttpError({
+    status: 400,
+    code: 'VALIDATION_ERROR',
+    message: 'Invalid request data',
+    details: [
+      {
+        location: 'cart',
+        path: 'currency',
+        code: 'invalid',
+        message: 'Only PLN carts can be merged',
+      },
+    ],
+    logMessage: 'cart.currency',
+  })
 }
 
 function quantityOverflow() {

@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict'
 import net from 'node:net'
 import { describe, it } from 'node:test'
-import { addGuestCartItem } from '../src/cart/repository.js'
+import {
+  ACCOUNT_CART_LOCK_NAMESPACE,
+  GUEST_CART_LOCK_NAMESPACE,
+  accountCartLockKey,
+  addGuestCartItem,
+  guestCartLockKey,
+} from '../src/cart/repository.js'
 import { registerCartRoutes } from '../src/cart/routes.js'
 import { createApp } from '../src/app.js'
+import { createDatabase } from '../src/db/pool.js'
 import { loadConfig } from '../src/config.js'
 import { HttpError } from '../src/http/errors.js'
 import { createLogger } from '../src/http/logger.js'
@@ -73,6 +80,10 @@ function plnCatalog(
         },
       ],
     }
+  }
+
+  if (sql.includes('pg_advisory_xact_lock')) {
+    return { rows: [{}] }
   }
 
   if (sql.startsWith('INSERT INTO public.carts')) {
@@ -707,11 +718,13 @@ describe('PATCH and DELETE /api/v1/cart/items/:id', () => {
       },
     )
 
+    const removed = database.calls.find((call) => call.sql.startsWith('DELETE'))
+
     assert.equal(result.status, 200)
     assert.deepEqual(result.body.data.items, [])
     assert.equal(result.body.data.total_amount, 0)
-    assert.deepEqual(database.calls[0].params, [itemId, sessionHash])
-    assert.match(database.calls[0].sql, /c\.session_id = \$2/)
+    assert.deepEqual(removed.params, [itemId, sessionHash])
+    assert.match(removed.sql, /c\.session_id = \$2/)
   })
 
   it('does not delete a line owned by another guest', async () => {
@@ -724,11 +737,11 @@ describe('PATCH and DELETE /api/v1/cart/items/:id', () => {
         cookie: guestCookie(),
       },
     )
+    const removed = database.calls.find((call) => call.sql.startsWith('DELETE'))
 
     assert.equal(result.status, 404)
-    assert.equal(database.calls.length, 1)
-    assert.deepEqual(database.calls[0].params, [otherItemId, sessionHash])
-    assert.match(database.calls[0].sql, /c\.user_id IS NULL/)
+    assert.deepEqual(removed.params, [otherItemId, sessionHash])
+    assert.match(removed.sql, /c\.user_id IS NULL/)
   })
 })
 
@@ -1146,6 +1159,542 @@ describe('account cart isolation', () => {
     assert.equal(
       database.calls.some((call) => call.sql === 'COMMIT'),
       true,
+    )
+  })
+})
+
+describe('cart owner locks', () => {
+  it('derives signed int32 keys for a guest hash and an account id', () => {
+    assert.equal(guestCartLockKey(`00000000${'ab'.repeat(28)}`), 0)
+    assert.equal(guestCartLockKey(`80000000${'ab'.repeat(28)}`), -2147483648)
+    assert.equal(guestCartLockKey(`7fffffff${'ab'.repeat(28)}`), 2147483647)
+    assert.equal(guestCartLockKey(`ffffffff${'ab'.repeat(28)}`), -1)
+    assert.equal(
+      accountCartLockKey(userId),
+      guestCartLockKey(userId.replaceAll('-', '')),
+    )
+    assert.equal(GUEST_CART_LOCK_NAMESPACE, 71001)
+    assert.equal(ACCOUNT_CART_LOCK_NAMESPACE, 71002)
+  })
+
+  it('locks the guest before inserting and keeps the hash out of that statement', async () => {
+    const database = fakeDatabase(async (sql) => plnCatalog(sql))
+
+    await addGuestCartItem(database, sessionHash, { productId, quantity: 1 })
+
+    const lock = database.calls.find((call) =>
+      call.sql.includes('pg_advisory_xact_lock'),
+    )
+    const inserted = database.calls.find((call) =>
+      call.sql.startsWith('INSERT INTO public.carts'),
+    )
+
+    assert.deepEqual(lock.params, [71001, guestCartLockKey(sessionHash)])
+    assert.equal(lock.sql.includes(sessionHash), false)
+    assert.equal(lock.sql.includes(sessionId), false)
+    assert.equal(
+      database.calls.indexOf(lock) < database.calls.indexOf(inserted),
+      true,
+    )
+    assert.equal(database.calls.at(-1).sql, 'COMMIT')
+  })
+
+  it('rolls back and releases the client when the cart write fails', async () => {
+    let released = 0
+    const queries = []
+    const database = createDatabase({
+      connectionString:
+        'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
+      createPool() {
+        return {
+          on() {},
+          async connect() {
+            return {
+              async query(sql) {
+                queries.push(sql)
+                if (sql === 'BEGIN' || sql === 'ROLLBACK') {
+                  return { rows: [] }
+                }
+
+                if (sql.includes('pg_advisory_xact_lock')) {
+                  return { rows: [{}] }
+                }
+
+                if (sql.includes('FROM public.products')) {
+                  return {
+                    rows: [
+                      {
+                        id: productId,
+                        is_active: true,
+                        currency: 'PLN',
+                        price_amount: '10',
+                      },
+                    ],
+                  }
+                }
+
+                throw new Error('insert failed')
+              },
+              release() {
+                released += 1
+              },
+            }
+          },
+          async end() {},
+        }
+      },
+    })
+
+    await assert.rejects(
+      addGuestCartItem(database, sessionHash, { productId, quantity: 1 }),
+      /insert failed/,
+    )
+
+    assert.equal(released, 1)
+    assert.equal(
+      queries.some((sql) => sql.includes('pg_advisory_xact_lock')),
+      true,
+    )
+    assert.equal(
+      queries.indexOf('ROLLBACK') >
+        queries.findIndex((sql) => sql.includes('pg_advisory_xact_lock')),
+      true,
+    )
+  })
+})
+
+const guestCartId = '99999999-9999-4999-8999-999999999999'
+const accountCartId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const movedItemId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+const secondProductId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+
+function mergeLine(id, product, quantity = 1, price = '1000') {
+  return {
+    id,
+    product_id: product,
+    quantity,
+    price_amount: price,
+    currency: 'PLN',
+  }
+}
+
+function mergeDatabase({
+  guestCart = { id: guestCartId, currency: 'PLN' },
+  guestLines = [mergeLine(itemId, productId)],
+  accountCart = null,
+  accountLines = [],
+  accountRead = [cartLine(itemId, productId)],
+  failUpdate = false,
+} = {}) {
+  let merged = false
+
+  return fakeDatabase(async (sql, params) => {
+    if (sql.includes('pg_advisory_xact_lock')) {
+      return { rows: [{}] }
+    }
+
+    if (
+      sql.includes('FROM public.carts') &&
+      sql.includes('session_id = $1') &&
+      sql.includes('FOR UPDATE')
+    ) {
+      return { rows: !merged && guestCart ? [guestCart] : [] }
+    }
+
+    if (sql.includes('FROM public.cart_items') && sql.includes('FOR UPDATE')) {
+      return {
+        rows: params[0] === guestCartId ? guestLines : accountLines,
+      }
+    }
+
+    if (
+      sql.includes('FROM public.carts') &&
+      sql.includes('user_id = $1') &&
+      sql.includes('FOR UPDATE')
+    ) {
+      return { rows: accountCart ? [accountCart] : [] }
+    }
+
+    if (sql.startsWith('UPDATE public.carts')) {
+      if (failUpdate) {
+        throw new Error(`update failed ${sessionHash}`)
+      }
+
+      merged = true
+      return { rows: [{ id: guestCartId }] }
+    }
+
+    if (sql.startsWith('INSERT INTO public.cart_items')) {
+      return { rows: [{ id: movedItemId }] }
+    }
+
+    if (sql.includes('p.name')) {
+      return { rows: accountRead }
+    }
+
+    return { rows: [] }
+  })
+}
+
+describe('cart merge', () => {
+  it('requires a bearer token', async () => {
+    const database = fakeDatabase(async () => {
+      throw new Error('database must not be used')
+    })
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart/merge',
+      { method: 'POST', cookie: guestCookie() },
+    )
+
+    assert.equal(result.status, 401)
+    assert.equal(result.body.error.code, 'UNAUTHORIZED')
+    assert.equal(database.calls.length, 0)
+  })
+
+  it('rejects an invalid token before reading a cart', async () => {
+    const database = fakeDatabase(async () => {
+      throw new Error('database must not be used')
+    })
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart/merge',
+      {
+        method: 'POST',
+        authorization: 'Bearer wrong-token',
+        cookie: guestCookie(),
+      },
+    )
+
+    assert.equal(result.status, 401)
+    assert.equal(database.calls.length, 0)
+  })
+
+  it('returns 503 when token verification is unavailable', async () => {
+    const database = fakeDatabase(async () => {
+      throw new Error('database must not be used')
+    })
+    const result = await request(
+      appWith(database, [], {
+        async verifyAccessToken() {
+          throw new HttpError({
+            status: 503,
+            code: 'SERVICE_UNAVAILABLE',
+            message: 'Service unavailable',
+            logMessage: 'auth.jwks_unavailable',
+          })
+        },
+      }),
+      '/api/v1/cart/merge',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        cookie: guestCookie(),
+      },
+    )
+
+    assert.equal(result.status, 503)
+    assert.equal(result.body.error.code, 'SERVICE_UNAVAILABLE')
+    assert.equal(database.calls.length, 0)
+  })
+
+  it('returns the account cart when the guest cookie is missing, invalid, or duplicated', async () => {
+    for (const cookie of [
+      undefined,
+      'shop_guest_session=short',
+      `${guestCookie()}; shop_guest_session=${otherSessionId}`,
+    ]) {
+      const database = mergeDatabase({
+        accountRead: [cartLine()],
+      })
+      const result = await request(
+        appWith(database, [], accountTokens()),
+        '/api/v1/cart/merge',
+        {
+          method: 'POST',
+          authorization: `Bearer ${accountToken}`,
+          cookie,
+          body: { user_id: otherUserId, session_id: sessionId },
+        },
+      )
+
+      assert.equal(result.status, 200)
+      assert.equal(result.body.data.items[0].id, itemId)
+      assert.equal(result.setCookie.length, 0)
+      assert.equal(
+        database.calls.some((call) => call.sql === 'BEGIN'),
+        false,
+      )
+      assert.equal(
+        database.calls.some((call) => call.sql.includes(sessionHash)),
+        false,
+      )
+      assert.deepEqual(database.calls.at(-1).params, [userId])
+    }
+  })
+
+  it('does not create a cart when the guest cart is missing or empty', async () => {
+    for (const options of [
+      { guestCart: null, accountRead: [] },
+      { guestLines: [], accountRead: [] },
+    ]) {
+      const database = mergeDatabase(options)
+      const result = await request(
+        appWith(database, [], accountTokens()),
+        '/api/v1/cart/merge',
+        {
+          method: 'POST',
+          authorization: `Bearer ${accountToken}`,
+          cookie: guestCookie(),
+        },
+      )
+
+      assert.equal(result.status, 200)
+      assert.deepEqual(result.body.data.items, [])
+      assert.equal(
+        database.calls.some((call) => call.sql.startsWith('INSERT')),
+        false,
+      )
+      assert.equal(
+        database.calls.some((call) => call.sql.startsWith('UPDATE')),
+        false,
+      )
+      assert.equal(
+        database.calls.some((call) => call.sql === 'COMMIT'),
+        true,
+      )
+    }
+  })
+
+  it('transfers a guest cart by changing its owner and keeping the line id', async () => {
+    const database = mergeDatabase()
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart/merge',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        cookie: guestCookie(),
+        body: { user_id: otherUserId },
+      },
+    )
+    const locks = database.calls.filter((call) =>
+      call.sql.includes('pg_advisory_xact_lock'),
+    )
+    const guestLock = database.calls.find(
+      (call) =>
+        call.sql.includes('FOR UPDATE') && call.sql.includes('session_id = $1'),
+    )
+    const accountLock = database.calls.find(
+      (call) =>
+        call.sql.includes('FOR UPDATE') &&
+        call.sql.includes('user_id = $1') &&
+        call.sql.includes('FROM public.carts'),
+    )
+    const adopted = database.calls.find((call) =>
+      call.sql.startsWith('UPDATE public.carts'),
+    )
+
+    assert.equal(result.status, 200)
+    assert.equal(result.setCookie.length, 0)
+    assert.deepEqual(locks[0].params, [71001, guestCartLockKey(sessionHash)])
+    assert.deepEqual(locks[1].params, [71002, accountCartLockKey(userId)])
+    assert.equal(
+      database.calls.indexOf(locks[0]) < database.calls.indexOf(locks[1]),
+      true,
+    )
+    assert.equal(
+      database.calls.indexOf(locks[1]) < database.calls.indexOf(guestLock),
+      true,
+    )
+    assert.equal(
+      database.calls.indexOf(guestLock) < database.calls.indexOf(accountLock),
+      true,
+    )
+    assert.deepEqual(accountLock.params, [userId])
+    assert.equal(
+      database.calls.indexOf(accountLock) < database.calls.indexOf(adopted),
+      true,
+    )
+    assert.equal(adopted.sql.includes('abandoned'), false)
+    assert.equal(adopted.sql.includes(sessionHash), false)
+    assert.equal(adopted.sql.includes(userId), false)
+    assert.deepEqual(adopted.params, [userId, guestCartId, sessionHash])
+    assert.equal(
+      database.calls.some((call) => call.sql.startsWith('INSERT')),
+      false,
+    )
+    assert.equal(database.calls.at(-2).sql, 'COMMIT')
+  })
+
+  it('sums matching products, moves the others, and abandons the guest cart', async () => {
+    const database = mergeDatabase({
+      guestLines: [
+        mergeLine(itemId, productId, 2),
+        mergeLine(movedItemId, secondProductId, 1),
+      ],
+      accountCart: { id: accountCartId, currency: 'PLN' },
+      accountLines: [mergeLine(otherItemId, productId, 3)],
+      accountRead: [
+        cartLine(otherItemId, productId),
+        cartLine(movedItemId, secondProductId),
+      ],
+    })
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart/merge',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        cookie: guestCookie(),
+      },
+    )
+    const inserted = database.calls.filter((call) =>
+      call.sql.startsWith('INSERT INTO public.cart_items'),
+    )
+    const abandoned = database.calls.find((call) =>
+      call.sql.includes('abandoned'),
+    )
+
+    assert.equal(result.status, 200)
+    assert.equal(result.body.data.items[0].id, otherItemId)
+    assert.deepEqual(inserted[0].params, [accountCartId, productId, 2])
+    assert.deepEqual(inserted[1].params, [accountCartId, secondProductId, 1])
+    assert.deepEqual(abandoned.params, [guestCartId, sessionHash])
+    assert.equal(abandoned.sql.includes('user_id = $1::uuid'), false)
+    assert.equal(
+      database.calls.some((call) => call.sql.includes('is_active')),
+      false,
+    )
+  })
+
+  it('does not copy lines again when the guest cart is no longer active', async () => {
+    const database = mergeDatabase({
+      accountCart: { id: accountCartId, currency: 'PLN' },
+      accountLines: [mergeLine(otherItemId, productId, 1)],
+    })
+    const app = appWith(database, [], accountTokens())
+
+    await request(app, '/api/v1/cart/merge', {
+      method: 'POST',
+      authorization: `Bearer ${accountToken}`,
+      cookie: guestCookie(),
+    })
+    const result = await request(app, '/api/v1/cart/merge', {
+      method: 'POST',
+      authorization: `Bearer ${accountToken}`,
+      cookie: guestCookie(),
+    })
+    const inserts = database.calls.filter((call) =>
+      call.sql.startsWith('INSERT INTO public.cart_items'),
+    )
+
+    assert.equal(result.status, 200)
+    assert.equal(inserts.length, 1)
+  })
+
+  it('rolls back when the merged quantity or amount is too large', async () => {
+    const quantityDatabase = mergeDatabase({
+      guestLines: [mergeLine(itemId, productId, 1)],
+      accountCart: { id: accountCartId, currency: 'PLN' },
+      accountLines: [mergeLine(otherItemId, productId, 2147483647)],
+    })
+    const quantity = await request(
+      appWith(quantityDatabase, [], accountTokens()),
+      '/api/v1/cart/merge',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        cookie: guestCookie(),
+      },
+    )
+
+    assert.equal(quantity.status, 400)
+    assert.equal(quantity.body.error.details[0].path, 'quantity')
+    assert.equal(
+      quantityDatabase.calls.some((call) => call.sql === 'ROLLBACK'),
+      true,
+    )
+    assert.equal(
+      quantityDatabase.calls.some((call) =>
+        call.sql.startsWith('INSERT INTO public.cart_items'),
+      ),
+      false,
+    )
+
+    const amountDatabase = mergeDatabase({
+      guestLines: [mergeLine(itemId, productId, 2, '9007199254740991')],
+    })
+    const amount = await request(
+      appWith(amountDatabase, [], accountTokens()),
+      '/api/v1/cart/merge',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        cookie: guestCookie(),
+      },
+    )
+
+    assert.equal(amount.status, 400)
+    assert.equal(amount.body.error.details[0].path, 'total_amount')
+    assert.equal(
+      amountDatabase.calls.some((call) => call.sql === 'ROLLBACK'),
+      true,
+    )
+    assert.equal(
+      amountDatabase.calls.some((call) => call.sql.startsWith('UPDATE')),
+      false,
+    )
+  })
+
+  it('rolls back a non-PLN cart and a failed write', async () => {
+    const currencyDatabase = mergeDatabase({
+      guestCart: { id: guestCartId, currency: 'EUR' },
+    })
+    const currency = await request(
+      appWith(currencyDatabase, [], accountTokens()),
+      '/api/v1/cart/merge',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        cookie: guestCookie(),
+      },
+    )
+
+    assert.equal(currency.status, 400)
+    assert.equal(currency.body.error.details[0].path, 'currency')
+    assert.equal(
+      currencyDatabase.calls.some((call) => call.sql === 'ROLLBACK'),
+      true,
+    )
+    assert.equal(
+      currencyDatabase.calls.some((call) => call.sql.startsWith('UPDATE')),
+      false,
+    )
+
+    const lines = []
+    const failed = mergeDatabase({ failUpdate: true })
+    const result = await request(
+      appWith(failed, lines, accountTokens()),
+      '/api/v1/cart/merge',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        cookie: guestCookie(),
+      },
+    )
+
+    assert.equal(result.status, 503)
+    assert.equal(result.text.includes(sessionHash), false)
+    assert.equal(result.text.includes(userId), false)
+    assert.equal(lines.join('\n').includes(sessionHash), false)
+    assert.equal(
+      failed.calls.some((call) => call.sql === 'ROLLBACK'),
+      true,
+    )
+    assert.equal(
+      failed.calls.some((call) => call.sql === 'COMMIT'),
+      false,
     )
   })
 })

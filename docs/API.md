@@ -1,6 +1,6 @@
 # Kontrakty REST API — wersja robocza
 
-Zaimplementowane są `GET /api/v1/health`, `GET /api/v1/health/ready`, publiczny odczyt aktywnych kategorii i produktów, `POST /api/v1/session/guest` oraz koszyk gościa i koszyk konta na tych samych ścieżkach: `GET /api/v1/cart`, `POST /api/v1/cart/items`, `PATCH /api/v1/cart/items/:id` i `DELETE /api/v1/cart/items/:id`. Pozostałe endpointy w tym dokumencie są planowane. Nie są jeszcze dostępne w Express.
+Zaimplementowane są `GET /api/v1/health`, `GET /api/v1/health/ready`, publiczny odczyt aktywnych kategorii i produktów, `POST /api/v1/session/guest`, koszyk gościa i koszyk konta na ścieżkach `GET /api/v1/cart`, `POST /api/v1/cart/items`, `PATCH /api/v1/cart/items/:id` i `DELETE /api/v1/cart/items/:id` oraz jawne `POST /api/v1/cart/merge`. Pozostałe endpointy w tym dokumencie są planowane. Nie są jeszcze dostępne w Express.
 
 ## 1. Konwencje
 - Prefix: `/api/v1`
@@ -235,9 +235,19 @@ Sukces tych czterech endpointów to HTTP 200 i aktualny koszyk:
 
 Błąd bazy daje HTTP 503 `SERVICE_UNAVAILABLE` bez treści SQL. Kwota poza kontraktem liczbowym API daje HTTP 400 `VALIDATION_ERROR` ze ścieżką `total_amount`, także na `GET`. To nie jest awaria bazy.
 
-Własność jest w zapytaniu. Koszyk gościa to aktywny wiersz z `user_id` pustym i `session_id` równym skrótowi ciasteczka. Koszyk konta to aktywny wiersz z `user_id` równym `req.auth.userId` i `session_id` pustym. Utworzenie używa `INSERT ... ON CONFLICT DO NOTHING` na właściwym indeksie częściowym, a potem osobnego `SELECT ... FOR UPDATE` na tym samym połączeniu. Drugie polecenie ma nową migawkę, więc widzi koszyk utworzony przez równoległe żądanie. `updated_at` koszyka nie jest przy tym ruszane. Pozycja używa unikalności `(cart_id, product_id)` i dodaje ilość. Suma kwot jest liczona na `bigint` pod blokadą koszyka, zanim pozycja zostanie zapisana. Równoległe dodania różnych produktów czekają na tę samą blokadę. Jeden właściciel ma jeden aktywny koszyk danego rodzaju.
+Własność jest w zapytaniu. Koszyk gościa to aktywny wiersz z `user_id` pustym i `session_id` równym skrótowi ciasteczka. Koszyk konta to aktywny wiersz z `user_id` równym `req.auth.userId` i `session_id` pustym. Zmiana koszyka bierze najpierw transakcyjną blokadę `pg_advisory_xact_lock` swojego właściciela. Odczyt tej blokady nie bierze. Utworzenie używa `INSERT ... ON CONFLICT DO NOTHING` na właściwym indeksie częściowym, a potem osobnego `SELECT ... FOR UPDATE` na tym samym połączeniu. Drugie polecenie ma nową migawkę, więc widzi koszyk utworzony przez równoległe żądanie. `updated_at` koszyka nie jest przy tym ruszane. Pozycja używa unikalności `(cart_id, product_id)` i dodaje ilość. Suma kwot jest liczona na `bigint` pod blokadą koszyka, zanim pozycja zostanie zapisana. Równoległe dodania różnych produktów czekają na tę samą blokadę. Jeden właściciel ma jeden aktywny koszyk danego rodzaju.
 
-Łączenie koszyka gościa z koszykiem konta po zalogowaniu pozostaje planowane. Cena pozycji koszyka nie jest utrwalana jako cena sprzedaży.
+`POST /api/v1/cart/merge` scala koszyk gościa z koszykiem konta. Woła go frontend po zalogowaniu. Sam nagłówek `Authorization` na czterech ścieżkach powyżej nie uruchamia scalania. Endpoint zawsze przechodzi przez `requireAuth`. Brak albo błędny token daje HTTP 401. Awaria weryfikacji tokenu daje HTTP 503. Właścicielem jest wyłącznie `req.auth.userId`. Body nie niesie właściciela ani sesji; pola `user_id` i `session_id` są ignorowane.
+
+Koszyk gościa bierze się z jednego poprawnego ciasteczka `shop_guest_session` i z `hashGuestSessionId`. Brak ciasteczka, zły format albo więcej niż jedno wystąpienie oznacza, że nie ma czego scalać: endpoint zwraca aktualny koszyk konta i nie tworzy sesji ani wiersza `carts`. Ciasteczko nie jest przy tym ustawiane ani usuwane.
+
+Gdy ciasteczko jest poprawne, scalanie idzie jedną transakcją. Najpierw blokada gościa `pg_advisory_xact_lock(71001, …)`, potem blokada konta `pg_advisory_xact_lock(71002, …)`, potem `FOR UPDATE` koszyka gościa. Brak aktywnego koszyka gościa albo brak jego pozycji kończy transakcję bez zapisu. Koszyk gościa bez pozycji zostaje `active`.
+
+Są pozycje gościa i nie ma koszyka konta: ten sam wiersz `carts` dostaje `user_id`, `session_id` staje się puste, status zostaje `active`. Identyfikator koszyka i identyfikatory pozycji zostają. Są oba koszyki: ilości tego samego produktu są sumowane w koszyku konta, produkt tylko z koszyka gościa jest dopisywany dotychczasowym `INSERT`, a koszyk gościa dostaje status `abandoned` z niezmienionym `session_id` i pustym `user_id`. Produkty nieaktywne też przechodzą. Cena nadal pochodzi z katalogu.
+
+Suma ilości powyżej `2147483647` daje HTTP 400 ze ścieżką `quantity` i wycofuje całą transakcję. Kwota pozycji albo suma koszyka poza bezpiecznym integerem JavaScriptu daje HTTP 400 ze ścieżką `total_amount` i wycofuje transakcję. Waluta koszyka albo produktu inna niż `PLN` daje HTTP 400 ze ścieżką `currency` i wycofuje transakcję. Sukces to HTTP 200 i aktualny koszyk konta w formacie powyżej. Powtórne wywołanie nie dolicza pozycji drugi raz, bo koszyk gościa nie jest już aktywnym źródłem.
+
+Cena pozycji koszyka nie jest utrwalana jako cena sprzedaży.
 
 Backend sprawdza aktywność produktu, ilość, aktualną kwotę należną i zgodność waluty produktu z walutą koszyka. Nie ufaj cenom, podatkowi ani walucie przesłanym przez frontend.
 

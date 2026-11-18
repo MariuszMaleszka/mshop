@@ -194,15 +194,13 @@ Jeden aktywny koszyk właściciela:
 
 Ciasteczko gościa jest `httpOnly` i `SameSite=Lax`, bez `Domain`. Atrybut `Secure` dostaje tylko w produkcji. Niesie nieprzewidywalny losowy sekret. W bazie leży tylko skrót.
 
-API koszyka konta i koszyka gościa jest zaimplementowane. Oba koszyki mogą być aktywne jednocześnie. Zalogowanie nie uruchamia łączenia.
+API koszyka konta i koszyka gościa jest zaimplementowane. Oba koszyki mogą być aktywne jednocześnie. Samo zalogowanie nie uruchamia łączenia. Łączy je jawne `POST /api/v1/cart/merge` w jednej transakcji, po blokadzie gościa i blokadzie konta:
 
-Planowane łączenie, jeszcze niezaimplementowane, ma iść jedną transakcją:
+- jest tylko koszyk gościa z pozycjami: ustaw `user_id`, wyczyść `session_id`, zostaw `active` i te same identyfikatory;
+- są oba aktywne koszyki: dopisz albo zsumuj pozycje w koszyku konta, a koszyk gościa ustaw na `abandoned` bez zmiany `session_id` i z pustym `user_id`;
+- koszyk gościa nie istnieje albo nie ma pozycji: nic nie łącz i nie twórz wiersza.
 
-- jest tylko koszyk gościa: ustaw `user_id`, wyczyść `session_id`;
-- są oba aktywne koszyki: sumuj ilości tego samego produktu w koszyku konta, a koszyk gościa ustaw na `abandoned`;
-- koszyk gościa jest pusty: nic nie łącz.
-
-`converted` ustawia checkout, nie logowanie. Zmiana `products.currency` albo `products.price_amount` nie przelicza istniejących koszyków.
+`converted` ustawia checkout, nie logowanie ani scalanie. Zmiana `products.currency` albo `products.price_amount` nie przelicza istniejących koszyków. Scalanie czyta aktualną cenę z katalogu i odrzuca walutę inną niż `PLN`.
 
 ### `cart_items`
 

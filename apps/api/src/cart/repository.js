@@ -1,5 +1,13 @@
 const MAX_SAFE_AMOUNT = 9007199254740991n
 const MAX_QUANTITY = 2147483647n
+const INT32_MIN = -2147483648
+const INT32_MAX = 2147483647
+export const GUEST_CART_LOCK_NAMESPACE = 71001
+export const ACCOUNT_CART_LOCK_NAMESPACE = 71002
+
+const LOCK_OWNER_SQL = `
+  SELECT pg_advisory_xact_lock($1::integer, $2::integer)
+`
 
 const PRODUCT_SQL = `
   SELECT id, is_active, btrim(currency) AS currency, price_amount
@@ -146,6 +154,59 @@ const DELETE_ACCOUNT_ITEM_SQL = `
   RETURNING ci.id
 `
 
+const LOCK_GUEST_CART_MERGE_SQL = `
+  SELECT id, btrim(currency) AS currency
+  FROM public.carts
+  WHERE session_id = $1
+    AND user_id IS NULL
+    AND status = 'active'
+  FOR UPDATE
+`
+
+const LOCK_ACCOUNT_CART_MERGE_SQL = `
+  SELECT id, btrim(currency) AS currency
+  FROM public.carts
+  WHERE user_id = $1::uuid
+    AND session_id IS NULL
+    AND status = 'active'
+  FOR UPDATE
+`
+
+const LOCK_MERGE_LINES_SQL = `
+  SELECT
+    ci.id,
+    ci.product_id,
+    ci.quantity,
+    p.price_amount,
+    btrim(p.currency) AS currency
+  FROM public.cart_items AS ci
+  JOIN public.products AS p ON p.id = ci.product_id
+  WHERE ci.cart_id = $1::uuid
+  ORDER BY ci.created_at ASC, ci.id ASC
+  FOR UPDATE OF ci
+`
+
+const ADOPT_GUEST_CART_SQL = `
+  UPDATE public.carts
+  SET user_id = $1::uuid,
+      session_id = NULL
+  WHERE id = $2::uuid
+    AND session_id = $3
+    AND user_id IS NULL
+    AND status = 'active'
+  RETURNING id
+`
+
+const ABANDON_GUEST_CART_SQL = `
+  UPDATE public.carts
+  SET status = 'abandoned'
+  WHERE id = $1::uuid
+    AND session_id = $2
+    AND user_id IS NULL
+    AND status = 'active'
+  RETURNING id
+`
+
 const ACCOUNT_CART_SQL = `
   SELECT
     ci.id,
@@ -170,6 +231,26 @@ export class CartAmountError extends Error {
   }
 }
 
+export class CartMergeError extends Error {
+  constructor(reason) {
+    super('Cart merge rejected')
+    this.name = 'CartMergeError'
+    this.reason = reason
+  }
+}
+
+export function guestCartLockKey(sessionHash) {
+  return lockKeyFromHex(sessionHash)
+}
+
+export function accountCartLockKey(userId) {
+  if (typeof userId !== 'string') {
+    throw new TypeError('Invalid cart owner key')
+  }
+
+  return lockKeyFromHex(userId.replaceAll('-', ''))
+}
+
 export async function findGuestCart(database, sessionHash) {
   const result = await database.query(CART_SQL, [sessionHash])
   return presentCart(result.rows)
@@ -180,9 +261,10 @@ export async function addGuestCartItem(
   sessionHash,
   { productId, quantity },
 ) {
-  return database.withTransaction((tx) =>
-    addItem(tx, sessionHash, productId, quantity),
-  )
+  return database.withTransaction(async (tx) => {
+    await lockGuestCart(tx, sessionHash)
+    return addItem(tx, sessionHash, productId, quantity)
+  })
 }
 
 export async function updateGuestCartItem(
@@ -190,14 +272,18 @@ export async function updateGuestCartItem(
   sessionHash,
   { itemId, quantity },
 ) {
-  return database.withTransaction((tx) =>
-    updateItem(tx, sessionHash, itemId, quantity),
-  )
+  return database.withTransaction(async (tx) => {
+    await lockGuestCart(tx, sessionHash)
+    return updateItem(tx, sessionHash, itemId, quantity)
+  })
 }
 
 export async function deleteGuestCartItem(database, sessionHash, itemId) {
-  const result = await database.query(DELETE_ITEM_SQL, [itemId, sessionHash])
-  return result.rows.length === 1
+  return database.withTransaction(async (tx) => {
+    await lockGuestCart(tx, sessionHash)
+    const result = await tx.query(DELETE_ITEM_SQL, [itemId, sessionHash])
+    return result.rows.length === 1
+  })
 }
 
 export async function findAccountCart(database, userId) {
@@ -210,9 +296,10 @@ export async function addAccountCartItem(
   userId,
   { productId, quantity },
 ) {
-  return database.withTransaction((tx) =>
-    addAccountItem(tx, userId, productId, quantity),
-  )
+  return database.withTransaction(async (tx) => {
+    await lockAccountCart(tx, userId)
+    return addAccountItem(tx, userId, productId, quantity)
+  })
 }
 
 export async function updateAccountCartItem(
@@ -220,14 +307,110 @@ export async function updateAccountCartItem(
   userId,
   { itemId, quantity },
 ) {
-  return database.withTransaction((tx) =>
-    updateAccountItem(tx, userId, itemId, quantity),
-  )
+  return database.withTransaction(async (tx) => {
+    await lockAccountCart(tx, userId)
+    return updateAccountItem(tx, userId, itemId, quantity)
+  })
 }
 
 export async function deleteAccountCartItem(database, userId, itemId) {
-  const result = await database.query(DELETE_ACCOUNT_ITEM_SQL, [itemId, userId])
-  return result.rows.length === 1
+  return database.withTransaction(async (tx) => {
+    await lockAccountCart(tx, userId)
+    const result = await tx.query(DELETE_ACCOUNT_ITEM_SQL, [itemId, userId])
+    return result.rows.length === 1
+  })
+}
+
+export async function mergeGuestCart(database, userId, sessionHash) {
+  return database.withTransaction(async (tx) => {
+    await lockGuestCart(tx, sessionHash)
+    await lockAccountCart(tx, userId)
+
+    const guest = await tx.query(LOCK_GUEST_CART_MERGE_SQL, [sessionHash])
+    const guestCart = guest.rows[0]
+
+    if (!guestCart) {
+      return
+    }
+
+    const guestLines = await tx.query(LOCK_MERGE_LINES_SQL, [guestCart.id])
+
+    if (guestLines.rows.length === 0) {
+      return
+    }
+
+    assertCartCurrency(guestCart.currency)
+    const account = await tx.query(LOCK_ACCOUNT_CART_MERGE_SQL, [userId])
+    const accountCart = account.rows[0]
+
+    if (!accountCart) {
+      assertMergeLines(guestLines.rows)
+      const adopted = await tx.query(ADOPT_GUEST_CART_SQL, [
+        userId,
+        guestCart.id,
+        sessionHash,
+      ])
+
+      if (adopted.rows.length !== 1) {
+        throw new TypeError('Invalid cart write result')
+      }
+
+      return
+    }
+
+    assertCartCurrency(accountCart.currency)
+    const accountLines = await tx.query(LOCK_MERGE_LINES_SQL, [accountCart.id])
+    assertMergeLines(combinedLines(accountLines.rows, guestLines.rows))
+
+    for (const line of guestLines.rows) {
+      const written = await tx.query(UPSERT_ITEM_SQL, [
+        accountCart.id,
+        line.product_id,
+        line.quantity,
+      ])
+
+      if (written.rows.length !== 1) {
+        throw new CartMergeError('quantity')
+      }
+    }
+
+    const abandoned = await tx.query(ABANDON_GUEST_CART_SQL, [
+      guestCart.id,
+      sessionHash,
+    ])
+
+    if (abandoned.rows.length !== 1) {
+      throw new TypeError('Invalid cart write result')
+    }
+  })
+}
+
+async function lockGuestCart(tx, sessionHash) {
+  await lockOwner(tx, GUEST_CART_LOCK_NAMESPACE, guestCartLockKey(sessionHash))
+}
+
+async function lockAccountCart(tx, userId) {
+  await lockOwner(tx, ACCOUNT_CART_LOCK_NAMESPACE, accountCartLockKey(userId))
+}
+
+async function lockOwner(tx, namespace, key) {
+  assertInt32(namespace)
+  assertInt32(key)
+  await tx.query(LOCK_OWNER_SQL, [namespace, key])
+}
+
+function lockKeyFromHex(hex) {
+  if (typeof hex !== 'string' || !/^[0-9a-f]{8}/i.test(hex)) {
+    throw new TypeError('Invalid cart owner key')
+  }
+
+  return Buffer.from(hex.slice(0, 8), 'hex').readInt32BE(0)
+}
+
+function assertInt32(value) {
+  if (!Number.isInteger(value) || value < INT32_MIN || value > INT32_MAX) {
+    throw new TypeError('Invalid cart lock key')
+  }
 }
 
 async function addItem(tx, sessionHash, productId, quantity) {
@@ -394,6 +577,74 @@ async function updateItem(tx, sessionHash, itemId, quantity) {
     quantity,
   ])
   return updated.rows.length === 1
+}
+
+function assertCartCurrency(currency) {
+  if (text(currency) !== 'PLN') {
+    throw new CartMergeError('currency')
+  }
+}
+
+function assertMergeLines(lines) {
+  let total = 0n
+
+  for (const line of lines) {
+    if (text(line.currency) !== 'PLN') {
+      throw new CartMergeError('currency')
+    }
+
+    const quantity =
+      typeof line.quantity === 'bigint'
+        ? line.quantity
+        : readQuantity(line.quantity)
+
+    if (quantity > MAX_QUANTITY) {
+      throw new CartMergeError('quantity')
+    }
+
+    const price = readMoney(line.price_amount)
+    const lineAmount = price * quantity
+
+    if (
+      price > MAX_SAFE_AMOUNT ||
+      lineAmount > MAX_SAFE_AMOUNT ||
+      total + lineAmount > MAX_SAFE_AMOUNT
+    ) {
+      throw new CartAmountError()
+    }
+
+    total += lineAmount
+  }
+}
+
+function combinedLines(accountLines, guestLines) {
+  const lines = new Map()
+
+  for (const line of accountLines) {
+    lines.set(line.product_id, {
+      ...line,
+      quantity: readQuantity(line.quantity),
+    })
+  }
+
+  for (const line of guestLines) {
+    const quantity = readQuantity(line.quantity)
+    const current = lines.get(line.product_id)
+
+    if (!current) {
+      lines.set(line.product_id, {
+        ...line,
+        quantity,
+      })
+      continue
+    }
+
+    current.quantity += quantity
+    current.price_amount = line.price_amount
+    current.currency = line.currency
+  }
+
+  return [...lines.values()]
 }
 
 function planQuantity(

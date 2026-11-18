@@ -1,7 +1,7 @@
 # Punkt kontrolny projektu – sklep internetowy
 
-**Stan na:** 18 listopada 2026, po wypchnięciu koszyka konta  
-**Status bieżący:** Koszyk gościa i koszyk konta są na `main` (`36972c1`). Audyt Step 10C nie wykazał ustaleń blokujących. Łączenie koszyków i checkout nie są rozpoczęte.
+**Stan na:** 18 listopada 2026, po Step 11B.2  
+**Status bieżący:** Koszyk gościa i koszyk konta są ukończone i są na `main` (`2cbb056`). Wspólny protokół blokad oraz `POST /api/v1/cart/merge` są zaimplementowane i przetestowane w drzewie roboczym; nie są jeszcze zacommitowane. Checkout, zamówienia, płatności i webhooki nie są rozpoczęte.
 
 > Ten plik jest krótkim punktem wznowienia pracy dla Cursor i ChatGPT. Nie zastępuje dokumentacji technicznej projektu (`ARCHITECTURE.md`, `API.md`, `ROADMAP.md`) ani raportów z wykonania. W razie rozbieżności najpierw sprawdź aktualny kod i właściwą dokumentację projektu. Nie zakładaj, że opis w tym pliku jest nowszy niż repozytorium.
 
@@ -66,7 +66,8 @@ Przed rozpoczęciem kolejnego zadania:
 - Gość może kupować bez konta.
 - `customers.user_id` jest nullable.
 - Koszyk gościa identyfikowany cookie `httpOnly`; w bazie przechowywany jest wyłącznie SHA-256 hash identyfikatora.
-- Koszyk konta identyfikowany wyłącznie przez `req.auth.userId` ze zweryfikowanego JWT. Ciasteczko gościa go nie wybiera. Oba koszyki mogą istnieć jednocześnie. Łączenie nie jest zaimplementowane.
+- Koszyk konta identyfikowany wyłącznie przez `req.auth.userId` ze zweryfikowanego JWT. Na czterech ścieżkach koszyka ciasteczko gościa go nie wybiera. Oba koszyki mogą istnieć jednocześnie.
+- Jawne `POST /api/v1/cart/merge` łączy koszyk gościa z koszykiem konta po zalogowaniu. Sam token tego nie robi. Ciasteczko `shop_guest_session` nie jest przy scalaniu ustawiane, usuwane ani odnawiane.
 - Historia zamówień konta obejmuje wyłącznie zamówienia przypisane przez `orders.user_id`. Zgodność adresu e-mail nie powoduje automatycznego przejęcia zamówienia gościa.
 - Zamówienie przechowuje snapshot produktu i danych rozliczeniowych.
 - Status płatności i realizacji zamówienia są rozdzielone.
@@ -120,6 +121,8 @@ Zakończona: `apps/api` (Express 5, health endpoint), `apps/web` (Nuxt 4.6.4), `
 - Step 9C – audyt koszyka gościa: wykonany. Brak ustaleń krytycznych, wysokich i średnich. Krok można zamknąć.
 - Step 10B – koszyk konta na tych samych czterech ścieżkach: ukończony. Jest na `main` w `36972c1`.
 - Step 10C – audyt koszyka konta i gościa: wykonany. Brak ustaleń krytycznych, wysokich i średnich. Krok można zamknąć.
+- Step 11B.1 – wspólny protokół blokad doradczych dla sześciu operacji modyfikujących koszyk: ukończony w drzewie roboczym.
+- Step 11B.2 – `POST /api/v1/cart/merge`: zaimplementowany i przetestowany w drzewie roboczym. Frontend jeszcze go nie wywołuje.
 
 ### Step 8 – istniejąca sesja gościa
 
@@ -134,9 +137,9 @@ Zakończona: `apps/api` (Express 5, health endpoint), `apps/web` (Nuxt 4.6.4), `
 
 ## 7. Bieżący status – punkt wznowienia
 
-### Phase 6 – koszyk gościa i koszyk konta
+### Phase 6 – koszyk gościa, koszyk konta i scalanie
 
-**Status: oba koszyki są na `main`. Nie implementować żadnego z nich ponownie.**
+**Status: oba koszyki są ukończone i są na `main`. Blokady i scalanie są ukończone lokalnie. Nie implementować żadnego z nich ponownie.**
 
 Te same endpointy:
 
@@ -152,24 +155,31 @@ Wybór właściciela:
 3. Właścicielem konta jest wyłącznie `req.auth.userId`. SQL ma `session_id IS NULL` i `status = 'active'`. Ciasteczko nie jest wtedy czytane.
 4. Cena i waluta schodzą z katalogu. MVP przyjmuje tylko `PLN`. Kwoty są liczbami całkowitymi w groszach.
 5. Dodanie i zmiana ilości idą jedną transakcją: `INSERT ... ON CONFLICT DO NOTHING`, potem `SELECT ... FOR UPDATE`, a suma jest liczona jako `BigInt` przed zapisem pozycji.
-6. Kwota poza bezpiecznym integerem JavaScriptu daje HTTP 400 i wycofanie transakcji. Przekroczenie zakresu ilości daje HTTP 400 i nie zapisuje nowej ilości.
-7. Cudza albo nieznana pozycja daje HTTP 404. Koszyki nie są scalane.
+6. Sześć operacji modyfikujących bierze najpierw transakcyjną blokadę właściciela: gość `71001`, konto `71002`. `GET` tej blokady nie bierze. Usunięcie gościa i konta też jest w transakcji.
+7. Kwota poza bezpiecznym integerem JavaScriptu daje HTTP 400 i wycofanie transakcji. Przekroczenie zakresu ilości daje HTTP 400 i nie zapisuje nowej ilości.
+8. Cudza albo nieznana pozycja daje HTTP 404. Te cztery ścieżki same koszyków nie scalają.
 
-Ostatnia weryfikacja: `pnpm --filter @shop/api test` — 147 testów, 0 niepowodzeń, 0 pominiętych. Dziewięć testów w `apps/api/test/cart.integration.test.js` wykonało się na lokalnym PostgreSQL 17.
+`POST /api/v1/cart/merge` wymaga `requireAuth`. Gościa rozpoznaje po jednym poprawnym `shop_guest_session` i istniejącym `hashGuestSessionId`. Brak, zły format albo wielokrotne ciasteczko zwraca aktualny koszyk konta i nie tworzy sesji ani wiersza. W jednej transakcji blokada gościa poprzedza blokadę konta, a potem blokowany jest rekord koszyka gościa.
 
-**Następna czynność:** czekać na decyzję użytkownika. Nie zaczynać łączenia koszyków, CORS, `__Host-` ani checkoutu bez osobnej zgody.
+- Brak pozycji: koszyk gościa zostaje `active`, nowy koszyk konta nie powstaje.
+- Są pozycje i nie ma koszyka konta: ten sam wiersz dostaje `user_id`, `session_id` staje się puste, status zostaje `active`.
+- Oba koszyki istnieją: ilości wspólnych produktów są sumowane, pozostałe pozycje gościa są dopisywane, a koszyk gościa dostaje `abandoned` z tym samym `session_id` i pustym `user_id`.
+- Produkty nieaktywne też przechodzą. Waluta inna niż `PLN` oraz przekroczenie ilości albo bezpiecznej kwoty wycofuje całe scalanie.
+
+Ostatnia weryfikacja: `pnpm --filter @shop/api test` — 183 testy, 0 niepowodzeń, 0 pominiętych. Testy integracyjne w `apps/api/test/cart.integration.test.js` wykonały się na lokalnym PostgreSQL, łącznie z wyścigami opartymi o `pg_locks`.
+
+**Następna czynność:** czekać na decyzję użytkownika. Nie zaczynać CORS, `__Host-`, checkoutu, zamówień, płatności ani webhooków bez osobnej zgody. Nie podłączać scalania we frontendzie bez osobnej zgody.
 
 Świadomie odłożone: prefiks `__Host-`, credentialed CORS, `SameSite=Lax` przy osobnych domenach, redakcja gołego skrótu bez nazwy ciasteczka.
 
-## 8. Co pozostaje po koszyku konta
+## 8. Co pozostaje po scaleniu koszyków
 
-Koszyk gościa i koszyk konta nie są już zadaniami do zaplanowania. Poniższe etapy są osobne i niezacząte.
+Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` nie są już zadaniami do zaplanowania. Poniższe etapy są osobne i niezacząte.
 
 ### Późniejsze, osobne etapy
 
-1. Łączenie koszyka gościa z koszykiem konta. Reguła zapisana w `docs/DATABASE.md` nie jest wdrożona.
-2. Integracja frontendu i obsługa CORS/cookie credentials – po ustaleniu domen i sposobu wdrożenia.
-3. Checkout, VAT, płatności i webhooki – dopiero po rozstrzygnięciu otwartych decyzji.
+1. Integracja frontendu i obsługa CORS/cookie credentials – po ustaleniu domen i sposobu wdrożenia. Frontend nie wywołuje jeszcze `POST /api/v1/cart/merge`.
+2. Checkout, zamówienia, VAT, płatności i webhooki – nadal niezaimplementowane. Dopiero po rozstrzygnięciu otwartych decyzji.
 
 ## 9. Otwarte decyzje na przyszłość
 
@@ -186,6 +196,6 @@ Koszyk gościa i koszyk konta nie są już zadaniami do zaplanowania. Poniższe 
 
 Nie wykonuj samodzielnie żadnych zmian tylko dlatego, że przeczytałeś ten plik.
 
-Koszyk gościa i koszyk konta są ukończone i są na `main`. Nie traktuj żadnego z nich jako pracy w toku i nie implementuj ich od nowa.
+Koszyk gościa i koszyk konta są ukończone i są na `main`. Protokół blokad oraz `POST /api/v1/cart/merge` są ukończone w drzewie roboczym. Nie traktuj żadnego z nich jako pracy w toku i nie implementuj ich od nowa.
 
-Następny etap wybiera użytkownik. Bez osobnej zgody nie zaczynaj łączenia koszyków, logowania, checkoutu, płatności, frontendu ani CORS.
+Następny etap wybiera użytkownik. Bez osobnej zgody nie zaczynaj logowania, checkoutu, zamówień, płatności, webhooków, frontendu ani CORS.
