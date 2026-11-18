@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import net from 'node:net'
 import { describe, it } from 'node:test'
 import { addGuestCartItem } from '../src/cart/repository.js'
 import { registerCartRoutes } from '../src/cart/routes.js'
 import { createApp } from '../src/app.js'
 import { loadConfig } from '../src/config.js'
+import { HttpError } from '../src/http/errors.js'
 import { createLogger } from '../src/http/logger.js'
 import { hashGuestSessionId } from '../src/session/guest-session.js'
 
@@ -18,6 +20,10 @@ const otherHash = hashGuestSessionId(otherSessionId)
 const productId = '44444444-4444-4444-8444-444444444444'
 const itemId = '66666666-6666-4666-8666-666666666666'
 const otherItemId = '77777777-7777-4777-8777-777777777777'
+const userId = '11111111-1111-4111-8111-111111111111'
+const otherUserId = '22222222-2222-4222-8222-222222222222'
+const accountToken = 'account-token'
+const otherAccountToken = 'other-account-token'
 
 const cartId = '88888888-8888-4888-8888-888888888888'
 
@@ -113,7 +119,7 @@ function close(server) {
   })
 }
 
-function appWith(database, lines = []) {
+function appWith(database, lines = [], accessTokens) {
   const logger = createLogger({
     nodeEnv: 'development',
     write(_level, line) {
@@ -124,13 +130,37 @@ function appWith(database, lines = []) {
   return createApp(config, {
     logger,
     database,
+    accessTokens,
     registerRoutes(router) {
       registerCartRoutes(router, { database })
     },
   })
 }
 
-async function request(app, path, { method = 'GET', cookie, body } = {}) {
+function accountTokens(users = { [accountToken]: userId }) {
+  return {
+    async verifyAccessToken(token) {
+      const id = users[token]
+
+      if (typeof id !== 'string') {
+        throw new HttpError({
+          status: 401,
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          logMessage: 'auth.invalid_token',
+        })
+      }
+
+      return id
+    },
+  }
+}
+
+async function request(
+  app,
+  path,
+  { method = 'GET', cookie, body, authorization } = {},
+) {
   const { server, baseUrl } = await listen(app)
 
   try {
@@ -138,6 +168,10 @@ async function request(app, path, { method = 'GET', cookie, body } = {}) {
 
     if (cookie !== undefined) {
       headers.cookie = cookie
+    }
+
+    if (authorization !== undefined) {
+      headers.authorization = authorization
     }
 
     if (body !== undefined) {
@@ -721,3 +755,435 @@ describe('guest cart database errors', () => {
     assert.equal(logged.includes('cart.query_failed'), true)
   })
 })
+
+describe('account cart access', () => {
+  it('keeps the guest cart when the request has no authorization header', async () => {
+    const database = fakeDatabase(async () => ({ rows: [cartLine()] }))
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart',
+      { cookie: guestCookie() },
+    )
+
+    assert.equal(result.status, 200)
+    assert.equal(result.body.data.items[0].id, itemId)
+    assert.deepEqual(database.calls[0].params, [sessionHash])
+    assert.match(database.calls[0].sql, /c\.session_id = \$1/)
+    assert.match(database.calls[0].sql, /c\.user_id IS NULL/)
+  })
+
+  it('rejects a guest request that has neither a header nor a cookie', async () => {
+    const database = fakeDatabase(async () => {
+      throw new Error('database must not be used')
+    })
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart',
+    )
+
+    assert.equal(result.status, 401)
+    assert.equal(result.body.error.code, 'UNAUTHORIZED')
+    assert.equal(database.calls.length, 0)
+  })
+
+  it('reads the account cart from the verified user when no cookie is sent', async () => {
+    const database = fakeDatabase(async (_sql, params) => {
+      if (params[0] === userId) {
+        return { rows: [cartLine()] }
+      }
+
+      return { rows: [cartLine(otherItemId)] }
+    })
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart',
+      { authorization: `Bearer ${accountToken}` },
+    )
+
+    assert.equal(result.status, 200)
+    assert.equal(result.body.data.items[0].id, itemId)
+    assert.deepEqual(database.calls[0].params, [userId])
+    assert.match(database.calls[0].sql, /c\.user_id = \$1::uuid/)
+    assert.match(database.calls[0].sql, /c\.session_id IS NULL/)
+    assert.match(database.calls[0].sql, /c\.status = 'active'/)
+    assert.equal(database.calls[0].params.includes(sessionHash), false)
+  })
+
+  it('ignores a valid guest cookie when the bearer token is valid', async () => {
+    const database = fakeDatabase(async (sql) => plnCatalog(sql))
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart/items',
+      {
+        method: 'POST',
+        cookie: guestCookie(),
+        authorization: `Bearer ${accountToken}`,
+        body: { productId, quantity: 1, user_id: otherUserId },
+      },
+    )
+    const cartInsert = database.calls.find((call) =>
+      call.sql.startsWith('INSERT INTO public.carts'),
+    )
+
+    assert.equal(result.status, 200)
+    assert.deepEqual(cartInsert.params, [userId])
+    assert.match(cartInsert.sql, /ON CONFLICT \(user_id\)/)
+    assert.match(cartInsert.sql, /DO NOTHING/)
+    assert.equal(/DO UPDATE/.test(cartInsert.sql), false)
+    assert.equal(
+      database.calls.some((call) =>
+        call.params.some(
+          (param) => param === sessionHash || param === otherUserId,
+        ),
+      ),
+      false,
+    )
+  })
+
+  it('does not fall back to the guest cart when the token is rejected', async () => {
+    const database = fakeDatabase(async () => {
+      throw new Error('database must not be used')
+    })
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart',
+      {
+        cookie: guestCookie(),
+        authorization: 'Bearer rejected-token',
+      },
+    )
+
+    assert.equal(result.status, 401)
+    assert.equal(result.body.error.code, 'UNAUTHORIZED')
+    assert.equal(database.calls.length, 0)
+    assert.equal(result.text.includes(sessionId), false)
+  })
+
+  it('rejects an empty or malformed authorization header', async () => {
+    const database = fakeDatabase(async () => {
+      throw new Error('database must not be used')
+    })
+    const app = appWith(database, [], accountTokens())
+
+    for (const authorization of ['Bearer', 'Bearer ', 'Token secret']) {
+      const result = await request(app, '/api/v1/cart', {
+        cookie: guestCookie(),
+        authorization,
+      })
+
+      assert.equal(result.status, 401)
+      assert.equal(result.body.error.code, 'UNAUTHORIZED')
+    }
+
+    assert.equal(database.calls.length, 0)
+  })
+
+  it('accepts a mixed-case authorization header for the account cart', async () => {
+    const database = fakeDatabase(async () => ({ rows: [cartLine()] }))
+    const app = appWith(database, [], accountTokens())
+    const result = await rawRequest(
+      app,
+      `AuThOrIzAtIoN: Bearer ${accountToken}`,
+    )
+
+    assert.equal(result.status, 200)
+    assert.deepEqual(database.calls[0].params, [userId])
+    assert.match(database.calls[0].sql, /c\.user_id = \$1::uuid/)
+    assert.equal(database.calls[0].params.includes(sessionHash), false)
+  })
+})
+
+describe('account cart isolation', () => {
+  it('does not return another user cart', async () => {
+    const database = fakeDatabase(async (_sql, params) => {
+      if (params[0] === otherUserId) {
+        return { rows: [cartLine(otherItemId)] }
+      }
+
+      return { rows: [] }
+    })
+    const tokens = accountTokens({
+      [accountToken]: userId,
+      [otherAccountToken]: otherUserId,
+    })
+    const own = await request(appWith(database, [], tokens), '/api/v1/cart', {
+      authorization: `Bearer ${accountToken}`,
+      cookie: guestCookie(),
+    })
+    const other = await request(appWith(database, [], tokens), '/api/v1/cart', {
+      authorization: `Bearer ${otherAccountToken}`,
+    })
+
+    assert.deepEqual(own.body.data.items, [])
+    assert.equal(other.body.data.items[0].id, otherItemId)
+    assert.deepEqual(database.calls[0].params, [userId])
+    assert.deepEqual(database.calls[1].params, [otherUserId])
+    assert.equal(
+      database.calls.some((call) => call.params.includes(sessionHash)),
+      false,
+    )
+  })
+
+  it('does not update or delete another user line', async () => {
+    const database = fakeDatabase(async () => ({ rows: [] }))
+    const app = appWith(database, [], accountTokens())
+    const patched = await request(app, `/api/v1/cart/items/${otherItemId}`, {
+      method: 'PATCH',
+      authorization: `Bearer ${accountToken}`,
+      cookie: guestCookie(),
+      body: { quantity: 4, user_id: otherUserId },
+    })
+    const removed = await request(app, `/api/v1/cart/items/${otherItemId}`, {
+      method: 'DELETE',
+      authorization: `Bearer ${accountToken}`,
+      cookie: guestCookie(),
+    })
+    const update = database.calls.find((call) => call.sql.startsWith('UPDATE'))
+    const lock = database.calls.find((call) => call.sql.includes('FOR UPDATE'))
+    const deleted = database.calls.find((call) => call.sql.startsWith('DELETE'))
+
+    assert.equal(patched.status, 404)
+    assert.equal(removed.status, 404)
+    assert.equal(update, undefined)
+    assert.deepEqual(lock.params, [otherItemId, userId])
+    assert.match(lock.sql, /c\.user_id = \$2::uuid/)
+    assert.match(lock.sql, /c\.session_id IS NULL/)
+    assert.deepEqual(deleted.params, [otherItemId, userId])
+    assert.equal(deleted.params.includes(sessionHash), false)
+    assert.equal(deleted.params.includes(otherUserId), false)
+  })
+
+  it('prices an account line from the catalog and stores only the token user', async () => {
+    const database = fakeDatabase(async (sql) => plnCatalog(sql))
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart/items',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        body: {
+          productId,
+          quantity: 2,
+          price_amount: 1,
+          currency: 'EUR',
+          user_id: otherUserId,
+          session_id: sessionId,
+        },
+      },
+    )
+    const cartInsert = database.calls.find((call) =>
+      call.sql.startsWith('INSERT INTO public.carts'),
+    )
+    const lock = database.calls.find(
+      (call) => call.sql.includes('FOR UPDATE') && !call.sql.includes('OF c'),
+    )
+    const itemInsert = database.calls.find((call) =>
+      call.sql.startsWith('INSERT INTO public.cart_items'),
+    )
+
+    assert.equal(result.status, 200)
+    assert.equal(result.body.data.items[0].price_amount, 12900)
+    assert.equal(result.body.data.items[0].currency, 'PLN')
+    assert.deepEqual(cartInsert.params, [userId])
+    assert.deepEqual(lock.params, [userId])
+    assert.deepEqual(itemInsert.params, [cartId, productId, 2])
+    assert.match(itemInsert.sql, /cart_items\.quantity \+ EXCLUDED\.quantity/)
+    assert.equal(
+      database.calls.indexOf(lock) > database.calls.indexOf(cartInsert),
+      true,
+    )
+    assert.equal(
+      database.calls.some((call) =>
+        call.params.some(
+          (param) =>
+            param === otherUserId || param === sessionHash || param === 1,
+        ),
+      ),
+      false,
+    )
+  })
+
+  it('returns 404 for a missing or inactive account product', async () => {
+    const missing = fakeDatabase(async () => ({ rows: [] }))
+    const inactive = fakeDatabase(async () => ({
+      rows: [
+        {
+          id: productId,
+          is_active: false,
+          currency: 'PLN',
+          price_amount: '12900',
+        },
+      ],
+    }))
+    const missingResult = await request(
+      appWith(missing, [], accountTokens()),
+      '/api/v1/cart/items',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        body: { productId, quantity: 1 },
+      },
+    )
+    const inactiveResult = await request(
+      appWith(inactive, [], accountTokens()),
+      '/api/v1/cart/items',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        body: { productId, quantity: 1 },
+      },
+    )
+
+    assert.equal(missingResult.status, 404)
+    assert.equal(inactiveResult.status, 404)
+    assert.equal(
+      missing.calls.some((call) =>
+        call.sql.includes('INSERT INTO public.carts'),
+      ),
+      false,
+    )
+    assert.equal(
+      inactive.calls.some((call) =>
+        call.sql.includes('INSERT INTO public.carts'),
+      ),
+      false,
+    )
+  })
+
+  it('rejects a non-PLN product for the account cart', async () => {
+    const database = fakeDatabase(async () => ({
+      rows: [
+        {
+          id: productId,
+          is_active: true,
+          currency: 'EUR',
+          price_amount: '12900',
+        },
+      ],
+    }))
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart/items',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        body: { productId, quantity: 1 },
+      },
+    )
+
+    assert.equal(result.status, 400)
+    assert.equal(result.body.error.details[0].path, 'currency')
+    assert.equal(
+      database.calls.some((call) =>
+        call.sql.includes('INSERT INTO public.carts'),
+      ),
+      false,
+    )
+  })
+
+  it('rolls back an account amount outside the safe integer range', async () => {
+    const database = fakeDatabase(async (sql) =>
+      plnCatalog(sql, { price: '5000000000000000', cart: [] }),
+    )
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart/items',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        body: { productId, quantity: 2 },
+      },
+    )
+
+    assert.equal(result.status, 400)
+    assert.equal(result.body.error.details[0].path, 'total_amount')
+    assert.equal(
+      database.calls.some((call) =>
+        call.sql.startsWith('INSERT INTO public.cart_items'),
+      ),
+      false,
+    )
+    assert.equal(
+      database.calls.some((call) => call.sql === 'ROLLBACK'),
+      true,
+    )
+    assert.equal(database.calls.at(-1).sql, 'ROLLBACK')
+  })
+
+  it('rejects an account quantity that would overflow the integer column', async () => {
+    const database = fakeDatabase(async (sql) =>
+      plnCatalog(sql, {
+        price: '1',
+        lines: [
+          {
+            product_id: productId,
+            quantity: 2147483647,
+            price_amount: '1',
+            currency: 'PLN',
+          },
+        ],
+        cart: [],
+      }),
+    )
+    const result = await request(
+      appWith(database, [], accountTokens()),
+      '/api/v1/cart/items',
+      {
+        method: 'POST',
+        authorization: `Bearer ${accountToken}`,
+        body: { productId, quantity: 1 },
+      },
+    )
+
+    assert.equal(result.status, 400)
+    assert.equal(result.body.error.details[0].path, 'quantity')
+    assert.equal(
+      database.calls.some((call) =>
+        call.sql.startsWith('INSERT INTO public.cart_items'),
+      ),
+      false,
+    )
+    assert.equal(
+      database.calls.some((call) => call.sql === 'COMMIT'),
+      true,
+    )
+  })
+})
+
+function rawRequest(app, headerLine) {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(0, '127.0.0.1', () => {
+      const port = server.address().port
+      const socket = net.connect({ host: '127.0.0.1', port }, () => {
+        socket.end(
+          `GET /api/v1/cart HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n${headerLine}\r\nConnection: close\r\n\r\n`,
+        )
+      })
+      const chunks = []
+
+      socket.on('data', (chunk) => {
+        chunks.push(chunk)
+      })
+      socket.on('error', (error) => {
+        server.close()
+        reject(error)
+      })
+      socket.on('end', () => {
+        server.close((error) => {
+          if (error) {
+            reject(error)
+            return
+          }
+
+          const raw = Buffer.concat(chunks).toString('utf8')
+          const separator = raw.indexOf('\r\n\r\n')
+          const status = Number(/^HTTP\/1\.1 (\d+)/.exec(raw)?.[1])
+          resolve({
+            status,
+            body: JSON.parse(raw.slice(separator + 4)),
+          })
+        })
+      })
+    })
+  })
+}

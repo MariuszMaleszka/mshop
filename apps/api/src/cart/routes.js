@@ -1,3 +1,4 @@
+import { requireAuth } from '../auth/require-auth.js'
 import { HttpError } from '../http/errors.js'
 import { validateRequest } from '../http/validate-request.js'
 import {
@@ -6,10 +7,14 @@ import {
   readGuestSessionId,
 } from '../session/guest-session.js'
 import {
+  addAccountCartItem,
   addGuestCartItem,
   CartAmountError,
+  deleteAccountCartItem,
   deleteGuestCartItem,
+  findAccountCart,
   findGuestCart,
+  updateAccountCartItem,
   updateGuestCartItem,
 } from './repository.js'
 import {
@@ -19,81 +24,133 @@ import {
 } from './validation.js'
 
 export function registerCartRoutes(app, { database } = {}) {
-  app.get('/api/v1/cart', requireGuestCart, async (req, res) => {
-    const data = await readCart(() => findGuestCart(database, req.guestCartKey))
+  app.get('/api/v1/cart', selectCartAccess, async (req, res) => {
+    const data = await readCart(() => findCart(database, req))
     res.status(200).json({ data, meta: {} })
   })
 
   app.post(
     '/api/v1/cart/items',
-    requireGuestCart,
+    selectCartAccess,
     validateRequest({ body: addCartItemSchema }),
     async (req, res) => {
       const { productId, quantity } = req.validated.body
 
       await readCart(async () => {
-        const result = await addGuestCartItem(database, req.guestCartKey, {
-          productId,
-          quantity,
-        })
+        const result = await addItem(database, req, productId, quantity)
         assertAdded(result)
       })
-      const data = await readCart(() =>
-        findGuestCart(database, req.guestCartKey),
-      )
+      const data = await readCart(() => findCart(database, req))
       res.status(200).json({ data, meta: {} })
     },
   )
 
   app.patch(
     '/api/v1/cart/items/:id',
-    requireGuestCart,
+    selectCartAccess,
     validateRequest({
       params: cartItemParamsSchema,
       body: updateCartItemSchema,
     }),
     async (req, res) => {
       const updated = await readCart(() =>
-        updateGuestCartItem(database, req.guestCartKey, {
-          itemId: req.validated.params.id,
-          quantity: req.validated.body.quantity,
-        }),
+        updateItem(
+          database,
+          req,
+          req.validated.params.id,
+          req.validated.body.quantity,
+        ),
       )
 
       if (!updated) {
         throw notFound()
       }
 
-      const data = await readCart(() =>
-        findGuestCart(database, req.guestCartKey),
-      )
+      const data = await readCart(() => findCart(database, req))
       res.status(200).json({ data, meta: {} })
     },
   )
 
   app.delete(
     '/api/v1/cart/items/:id',
-    requireGuestCart,
+    selectCartAccess,
     validateRequest({ params: cartItemParamsSchema }),
     async (req, res) => {
       const deleted = await readCart(() =>
-        deleteGuestCartItem(
-          database,
-          req.guestCartKey,
-          req.validated.params.id,
-        ),
+        deleteItem(database, req, req.validated.params.id),
       )
 
       if (!deleted) {
         throw notFound()
       }
 
-      const data = await readCart(() =>
-        findGuestCart(database, req.guestCartKey),
-      )
+      const data = await readCart(() => findCart(database, req))
       res.status(200).json({ data, meta: {} })
     },
   )
+}
+
+function selectCartAccess(req, res, next) {
+  if (hasAuthorizationHeader(req)) {
+    const authenticate = requireAuth(req.app.locals.accessTokens)
+    return authenticate(req, res, next)
+  }
+
+  requireGuestCart(req, res, next)
+}
+
+function hasAuthorizationHeader(req) {
+  const rawHeaders = req.rawHeaders
+
+  if (!Array.isArray(rawHeaders)) {
+    return req.get('authorization') !== undefined
+  }
+
+  for (let index = 0; index < rawHeaders.length; index += 2) {
+    if (String(rawHeaders[index]).toLowerCase() === 'authorization') {
+      return true
+    }
+  }
+
+  return false
+}
+
+function findCart(database, req) {
+  if (hasAuthorizationHeader(req)) {
+    return findAccountCart(database, req.auth.userId)
+  }
+
+  return findGuestCart(database, req.guestCartKey)
+}
+
+function addItem(database, req, productId, quantity) {
+  if (hasAuthorizationHeader(req)) {
+    return addAccountCartItem(database, req.auth.userId, {
+      productId,
+      quantity,
+    })
+  }
+
+  return addGuestCartItem(database, req.guestCartKey, { productId, quantity })
+}
+
+function updateItem(database, req, itemId, quantity) {
+  if (hasAuthorizationHeader(req)) {
+    return updateAccountCartItem(database, req.auth.userId, {
+      itemId,
+      quantity,
+    })
+  }
+
+  return updateGuestCartItem(database, req.guestCartKey, { itemId, quantity })
+}
+
+function deleteItem(database, req, itemId) {
+  if (hasAuthorizationHeader(req)) {
+    return deleteAccountCartItem(database, req.auth.userId, itemId)
+  }
+
+  return deleteGuestCartItem(database, req.guestCartKey, itemId)
 }
 
 function requireGuestCart(req, _res, next) {

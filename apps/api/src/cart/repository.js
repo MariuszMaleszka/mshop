@@ -95,6 +95,74 @@ const CART_SQL = `
   ORDER BY ci.created_at ASC, ci.id ASC
 `
 
+const INSERT_ACCOUNT_CART_SQL = `
+  INSERT INTO public.carts (user_id, currency)
+  VALUES ($1::uuid, 'PLN')
+  ON CONFLICT (user_id)
+    WHERE status = 'active' AND user_id IS NOT NULL
+  DO NOTHING
+`
+
+const LOCK_ACCOUNT_CART_SQL = `
+  SELECT id
+  FROM public.carts
+  WHERE user_id = $1::uuid
+    AND session_id IS NULL
+    AND status = 'active'
+  FOR UPDATE
+`
+
+const LOCK_ACCOUNT_ITEM_SQL = `
+  SELECT ci.cart_id, ci.product_id
+  FROM public.cart_items AS ci
+  JOIN public.carts AS c ON c.id = ci.cart_id
+  WHERE ci.id = $1::uuid
+    AND c.user_id = $2::uuid
+    AND c.session_id IS NULL
+    AND c.status = 'active'
+  FOR UPDATE OF c
+`
+
+const UPDATE_ACCOUNT_ITEM_SQL = `
+  UPDATE public.cart_items AS ci
+  SET quantity = $3::integer
+  FROM public.carts AS c
+  WHERE ci.id = $1::uuid
+    AND ci.cart_id = c.id
+    AND c.user_id = $2::uuid
+    AND c.session_id IS NULL
+    AND c.status = 'active'
+  RETURNING ci.id
+`
+
+const DELETE_ACCOUNT_ITEM_SQL = `
+  DELETE FROM public.cart_items AS ci
+  USING public.carts AS c
+  WHERE ci.id = $1::uuid
+    AND ci.cart_id = c.id
+    AND c.user_id = $2::uuid
+    AND c.session_id IS NULL
+    AND c.status = 'active'
+  RETURNING ci.id
+`
+
+const ACCOUNT_CART_SQL = `
+  SELECT
+    ci.id,
+    ci.product_id,
+    p.name,
+    p.price_amount,
+    btrim(p.currency) AS currency,
+    ci.quantity
+  FROM public.cart_items AS ci
+  JOIN public.carts AS c ON c.id = ci.cart_id
+  JOIN public.products AS p ON p.id = ci.product_id
+  WHERE c.user_id = $1::uuid
+    AND c.session_id IS NULL
+    AND c.status = 'active'
+  ORDER BY ci.created_at ASC, ci.id ASC
+`
+
 export class CartAmountError extends Error {
   constructor() {
     super('Cart amount exceeds the supported range')
@@ -129,6 +197,36 @@ export async function updateGuestCartItem(
 
 export async function deleteGuestCartItem(database, sessionHash, itemId) {
   const result = await database.query(DELETE_ITEM_SQL, [itemId, sessionHash])
+  return result.rows.length === 1
+}
+
+export async function findAccountCart(database, userId) {
+  const result = await database.query(ACCOUNT_CART_SQL, [userId])
+  return presentCart(result.rows)
+}
+
+export async function addAccountCartItem(
+  database,
+  userId,
+  { productId, quantity },
+) {
+  return database.withTransaction((tx) =>
+    addAccountItem(tx, userId, productId, quantity),
+  )
+}
+
+export async function updateAccountCartItem(
+  database,
+  userId,
+  { itemId, quantity },
+) {
+  return database.withTransaction((tx) =>
+    updateAccountItem(tx, userId, itemId, quantity),
+  )
+}
+
+export async function deleteAccountCartItem(database, userId, itemId) {
+  const result = await database.query(DELETE_ACCOUNT_ITEM_SQL, [itemId, userId])
   return result.rows.length === 1
 }
 
@@ -179,6 +277,89 @@ async function addItem(tx, sessionHash, productId, quantity) {
   }
 
   return { outcome: 'ready', written: 1, carts: 1 }
+}
+
+async function addAccountItem(tx, userId, productId, quantity) {
+  const productResult = await tx.query(PRODUCT_SQL, [productId])
+  const product = productResult.rows[0]
+
+  if (!product) {
+    return { outcome: 'missing' }
+  }
+
+  if (product.is_active !== true) {
+    return { outcome: 'inactive' }
+  }
+
+  if (text(product.currency) !== 'PLN') {
+    return { outcome: 'currency' }
+  }
+
+  await tx.query(INSERT_ACCOUNT_CART_SQL, [userId])
+  const locked = await tx.query(LOCK_ACCOUNT_CART_SQL, [userId])
+  const cartId = locked.rows[0]?.id
+
+  if (locked.rows.length !== 1 || typeof cartId !== 'string') {
+    throw new TypeError('Invalid cart write result')
+  }
+
+  const lines = await tx.query(LINES_SQL, [cartId])
+  const plan = planQuantity(lines.rows, {
+    productId,
+    unit: readMoney(product.price_amount),
+    nextQuantity: currentQuantity(lines.rows, productId) + BigInt(quantity),
+    countsTowardTotal: true,
+  })
+
+  if (plan === 'quantity') {
+    return { outcome: 'overflow' }
+  }
+
+  if (plan === 'amount') {
+    throw new CartAmountError()
+  }
+
+  const written = await tx.query(UPSERT_ITEM_SQL, [cartId, productId, quantity])
+
+  if (written.rows.length !== 1) {
+    return { outcome: 'overflow' }
+  }
+
+  return { outcome: 'ready', written: 1, carts: 1 }
+}
+
+async function updateAccountItem(tx, userId, itemId, quantity) {
+  const locked = await tx.query(LOCK_ACCOUNT_ITEM_SQL, [itemId, userId])
+  const item = locked.rows[0]
+
+  if (!item) {
+    return false
+  }
+
+  const lines = await tx.query(LINES_SQL, [item.cart_id])
+  const current = lines.rows.find((line) => line.product_id === item.product_id)
+
+  if (!current) {
+    throw new TypeError('Invalid cart write result')
+  }
+
+  const plan = planQuantity(lines.rows, {
+    productId: item.product_id,
+    unit: readMoney(current.price_amount),
+    nextQuantity: BigInt(quantity),
+    countsTowardTotal: text(current.currency) === 'PLN',
+  })
+
+  if (plan === 'amount') {
+    throw new CartAmountError()
+  }
+
+  const updated = await tx.query(UPDATE_ACCOUNT_ITEM_SQL, [
+    itemId,
+    userId,
+    quantity,
+  ])
+  return updated.rows.length === 1
 }
 
 async function updateItem(tx, sessionHash, itemId, quantity) {

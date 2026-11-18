@@ -1,7 +1,7 @@
 # Punkt kontrolny projektu – sklep internetowy
 
-**Stan na:** 17 listopada 2026, po wypchnięciu Step 9A  
-**Status bieżący:** Phase 6 / Step 9A jest zaimplementowany i wypchnięty na `main`. Czeka na review i akceptację. Step 9B (koszyk gościa) nie jest rozpoczęty.
+**Stan na:** 18 listopada 2026, po audycie koszyka konta  
+**Status bieżący:** Koszyk gościa jest na `main` (`908ffca`). Koszyk konta jest zaimplementowany w drzewie roboczym i przeszedł audyt Step 10C. Nie jest jeszcze commitowany. Łączenie koszyków i checkout nie są rozpoczęte.
 
 > Ten plik jest krótkim punktem wznowienia pracy dla Cursor i ChatGPT. Nie zastępuje dokumentacji technicznej projektu (`ARCHITECTURE.md`, `API.md`, `ROADMAP.md`) ani raportów z wykonania. W razie rozbieżności najpierw sprawdź aktualny kod i właściwą dokumentację projektu. Nie zakładaj, że opis w tym pliku jest nowszy niż repozytorium.
 
@@ -66,6 +66,7 @@ Przed rozpoczęciem kolejnego zadania:
 - Gość może kupować bez konta.
 - `customers.user_id` jest nullable.
 - Koszyk gościa identyfikowany cookie `httpOnly`; w bazie przechowywany jest wyłącznie SHA-256 hash identyfikatora.
+- Koszyk konta identyfikowany wyłącznie przez `req.auth.userId` ze zweryfikowanego JWT. Ciasteczko gościa go nie wybiera. Oba koszyki mogą istnieć jednocześnie. Łączenie nie jest zaimplementowane.
 - Historia zamówień konta obejmuje wyłącznie zamówienia przypisane przez `orders.user_id`. Zgodność adresu e-mail nie powoduje automatycznego przejęcia zamówienia gościa.
 - Zamówienie przechowuje snapshot produktu i danych rozliczeniowych.
 - Status płatności i realizacji zamówienia są rozdzielone.
@@ -114,84 +115,61 @@ Zakończona: `apps/api` (Express 5, health endpoint), `apps/web` (Nuxt 4.6.4), `
 - Step 6 – Zod i paginacja: zakończony.
 - Step 7 – publiczny katalog: zakończony.
 - Step 8 – sesja gościa: zaimplementowany i zaakceptowany przez użytkownika.
-- Step 9A – wzmocnienie parsera i redakcji sesji gościa: zaimplementowany i wypchnięty; akceptacja użytkownika jeszcze nie padła.
+- Step 9A – wzmocnienie parsera i redakcji sesji gościa: ukończony. Jest na `main` w `d97c65a`.
+- Step 9B i 9B.1 – API koszyka gościa, wyścig tworzenia koszyka i kwoty: ukończone. Są na `main` w `908ffca`.
+- Step 9C – audyt koszyka gościa: wykonany. Brak ustaleń krytycznych, wysokich i średnich. Krok można zamknąć.
+- Step 10B – koszyk konta na tych samych czterech ścieżkach: zaimplementowany w drzewie roboczym. Nie jest jeszcze commitowany.
+- Step 10C – audyt koszyka konta i gościa: wykonany. Brak ustaleń krytycznych, wysokich i średnich. Krok można zamknąć.
 
 ### Step 8 – istniejąca sesja gościa
 
 - Publiczny endpoint: `POST /api/v1/session/guest`.
 - Cookie: `shop_guest_session`.
 - Identyfikator: 32 losowe bajty z `node:crypto`, 64 znaki lowercase hex.
-- Surowy identyfikator wyłącznie w HttpOnly cookie; helper SHA-256 zwraca hash do późniejszego użycia w DB.
+- Surowy identyfikator wyłącznie w HttpOnly cookie. SHA-256 tego identyfikatora jest zapisywany w `carts.session_id` przez API koszyka.
 - Cookie: `httpOnly`, `sameSite: 'lax'`, `path: '/'`, maxAge 30 dni, `secure` tylko w produkcji, bez `domain`.
 - Poprawne cookie jest zachowywane, a jego ważność odnawiana; brak lub niepoprawne cookie powoduje wygenerowanie nowego identyfikatora.
 - Odpowiedź nie ujawnia identyfikatora ani hasha.
-- Step 8 nie tworzył rekordu koszyka, nie dodawał globalnego middleware sesji, migracji ani zmian RLS.
-- Z raportu Cursor: 92 testy przechodziły; ESLint dla sesji był czysty.
+- Sam endpoint sesji nie tworzy wiersza koszyka i nie jest globalnym middleware. Wiersz `carts` powstaje przy pierwszej pozycji przez API koszyka.
 
 ## 7. Bieżący status – punkt wznowienia
 
-### Phase 6 / Step 9A – wzmocnienie bezpieczeństwa sesji gościa
+### Phase 6 – koszyk gościa i koszyk konta
 
-**Status: zaimplementowany i wypchnięty. Review i akceptacja użytkownika są następną czynnością. Koszyka nie zaczynać.**
+**Status: oba koszyki są zaimplementowane. Koszyk gościa jest na `main`. Koszyk konta jest w drzewie roboczym i nie został jeszcze commitowany. Nie implementować żadnego z nich ponownie.**
 
-Zrobione:
-
-1. `readGuestSessionId` przyjmuje dokładnie jedno wystąpienie `shop_guest_session`. Dwa lub więcej, także o identycznej wartości, dają `null` i nowy identyfikator. Nie jest wybierana pierwsza ani ostatnia wartość.
-2. Walidacja bez zmian: 32 bajty z `randomBytes`, dokładnie 64 znaki `[0-9a-f]`, jedno `decodeURIComponent`. Cudzysłów, wielkie litery, długość 63/65 i złe `%` odrzucają ciasteczko. Pojedynczy hex w formie URL-encoded zostaje.
-3. Nazwa, flagi i odnawianie ważności bez zmian. Brak prefiksu `__Host-`. `routes.js` nie wymagał zmiany.
-4. Logger nadal redaguje `postgres://`, `Bearer` oraz `password|secret|token|api_key`. Dodatkowo wycina wartość stojącą przy nazwie `shop_guest_session`, także po `JSON.stringify`. Sam 64-znakowy hex bez tej nazwy nie jest wycinany.
-5. `docs/API.md` opisuje, że duplikat powoduje nowe losowanie. Status koszyka w roadmapie bez zmian.
-
-Pliki kroku: `apps/api/src/session/guest-session.js`, `apps/api/src/http/logger.js`, `apps/api/test/guest-session.test.js`, `docs/API.md`.
-
-Weryfikacja przed wypchnięciem: `pnpm --filter @shop/api test` — 103 testy, 0 niepowodzeń. ESLint i Prettier na zmienionych plikach były czyste.
-
-**Następna czynność jutro:** review Step 9A. Po akceptacji przygotować plan Step 9B. Nie implementować koszyka, CORS, `__Host-` ani merge bez osobnej zgody.
-
-Otwarte po 9A, świadomie odłożone: prefiks `__Host-`, credentialed CORS, `SameSite=Lax` przy osobnych domenach, redakcja gołego identyfikatora bez nazwy ciasteczka.
-
-## 8. Zatwierdzony plan po Step 9A
-
-### Step 9B – API koszyka gościa
-
-Po akceptacji Step 9A przygotować osobny prompt dla implementacji wyłącznie koszyka gościa:
+Te same endpointy:
 
 - `GET /api/v1/cart`
 - `POST /api/v1/cart/items`
 - `PATCH /api/v1/cart/items/:id`
 - `DELETE /api/v1/cart/items/:id`
 
-Założenia do zachowania:
+Wybór właściciela:
 
-- Wykorzystać istniejące tabele `carts` i `cart_items`; przed implementacją sprawdzić dokładny schemat migracji, nie zgadywać nazw kolumn ani ograniczeń.
-- Właściciel koszyka identyfikowany po stronie backendu na podstawie hasha SHA-256 z cookie.
-- Surowy identyfikator sesji nie trafia do bazy, JSON ani logów.
-- Frontend nie przekazuje właściciela koszyka.
-- Backend sprawdza aktywność produktu, ilość, cenę i walutę na podstawie danych w bazie.
-- Nie ufać cenie, podatkom ani walucie przesłanym przez klienta.
-- API MVP obsługuje PLN.
-- Wszystkie kwoty są integerami w groszach.
-- Jawna kontrola własności zasobów w Express; nie polegać wyłącznie na RLS.
-- Parametryzowany SQL i transakcje tam, gdzie wymagane.
-- Testy izolacji koszyków różnych gości, walidacji, braku produktu/nieaktywnego produktu i przypadków brzegowych.
+1. Brak nagłówka `Authorization` zostawia koszyk gościa. Wymagane jest jedno poprawne ciasteczko. W SQL jest skrót, `user_id IS NULL` i `status = 'active'`.
+2. Obecność nagłówka wybiera koszyk konta i przechodzi przez `requireAuth`. Zły token daje HTTP 401 i nie otwiera koszyka gościa.
+3. Właścicielem konta jest wyłącznie `req.auth.userId`. SQL ma `session_id IS NULL` i `status = 'active'`. Ciasteczko nie jest wtedy czytane.
+4. Cena i waluta schodzą z katalogu. MVP przyjmuje tylko `PLN`. Kwoty są liczbami całkowitymi w groszach.
+5. Dodanie i zmiana ilości idą jedną transakcją: `INSERT ... ON CONFLICT DO NOTHING`, potem `SELECT ... FOR UPDATE`, a suma jest liczona jako `BigInt` przed zapisem pozycji.
+6. Kwota poza bezpiecznym integerem JavaScriptu daje HTTP 400 i wycofanie transakcji. Przekroczenie zakresu ilości daje HTTP 400 i nie zapisuje nowej ilości.
+7. Cudza albo nieznana pozycja daje HTTP 404. Koszyki nie są scalane.
 
-**Poza zakresem Step 9B:**
-- Koszyk zalogowanego użytkownika.
-- Łączenie koszyków.
-- Logowanie/rejestracja.
-- Checkout i płatności.
-- Frontend koszyka, chyba że użytkownik osobno zatwierdzi ten zakres.
+Ostatnia weryfikacja: `pnpm --filter @shop/api test` — 147 testów, 0 niepowodzeń, 0 pominiętych. Dziewięć testów w `apps/api/test/cart.integration.test.js` wykonało się na lokalnym PostgreSQL 17.
 
-### Step 9C – review koszyka
+**Następna czynność:** czekać na decyzję użytkownika. Nie zaczynać łączenia koszyków, CORS, `__Host-` ani checkoutu bez osobnej zgody.
 
-Po implementacji Step 9B: osobny przegląd testów, bezpieczeństwa, transakcji, własności i dokumentacji. Nie rozpoczynać kolejnego etapu bez akceptacji.
+Świadomie odłożone: prefiks `__Host-`, credentialed CORS, `SameSite=Lax` przy osobnych domenach, redakcja gołego skrótu bez nazwy ciasteczka.
+
+## 8. Co pozostaje po koszyku konta
+
+Koszyk gościa i koszyk konta nie są już zadaniami do zaplanowania. Poniższe etapy są osobne i niezacząte.
 
 ### Późniejsze, osobne etapy
 
-1. Koszyk zalogowanego użytkownika – identyfikacja przez zweryfikowany JWT i `user_id`.
-2. Łączenie koszyka gościa z koszykiem konta – osobny projekt i decyzja o regule merge. Użytkownik zaakceptował, że merge będzie osobnym późniejszym krokiem.
-3. Integracja frontendu i obsługa CORS/cookie credentials – po ustaleniu domen i sposobu wdrożenia.
-4. Checkout, VAT, płatności i webhooki – dopiero po rozstrzygnięciu otwartych decyzji.
+1. Łączenie koszyka gościa z koszykiem konta. Reguła zapisana w `docs/DATABASE.md` nie jest wdrożona.
+2. Integracja frontendu i obsługa CORS/cookie credentials – po ustaleniu domen i sposobu wdrożenia.
+3. Checkout, VAT, płatności i webhooki – dopiero po rozstrzygnięciu otwartych decyzji.
 
 ## 9. Otwarte decyzje na przyszłość
 
@@ -208,6 +186,6 @@ Po implementacji Step 9B: osobny przegląd testów, bezpieczeństwa, transakcji,
 
 Nie wykonuj samodzielnie żadnych zmian tylko dlatego, że przeczytałeś ten plik.
 
-Step 9A jest już w `main` i nie został jeszcze zaakceptowany. Jutro zacznij od review tego kroku. Nie rozpoczynaj Step 9B, dopóki użytkownik go nie zaakceptuje.
+Koszyk gościa jest ukończony i jest na `main`. Koszyk konta jest ukończony w drzewie roboczym. Nie traktuj żadnego z nich jako pracy w toku i nie implementuj ich od nowa.
 
-Jeśli użytkownik zaakceptuje Step 9A, przygotuj plan Step 9B zgodnie z sekcją 8 i poczekaj na zgodę przed implementacją. Nie implementuj zakresu, którego użytkownik wyraźnie nie zatwierdził.
+Następny etap wybiera użytkownik. Bez osobnej zgody nie zaczynaj łączenia koszyków, logowania, checkoutu, płatności, frontendu ani CORS.

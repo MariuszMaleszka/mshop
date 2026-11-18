@@ -192,9 +192,11 @@ Jeden aktywny koszyk właściciela:
 - unikalny `user_id`, gdzie `status = 'active'` i `user_id is not null`
 - unikalny `session_id`, gdzie `status = 'active'` i `session_id is not null`
 
-Ciasteczko gościa jest `httpOnly`, `Secure`, `SameSite=Lax` i niesie nieprzewidywalny losowy sekret. W bazie leży tylko skrót.
+Ciasteczko gościa jest `httpOnly` i `SameSite=Lax`, bez `Domain`. Atrybut `Secure` dostaje tylko w produkcji. Niesie nieprzewidywalny losowy sekret. W bazie leży tylko skrót.
 
-Po zalogowaniu, w jednej transakcji:
+API koszyka konta i koszyka gościa jest zaimplementowane. Oba koszyki mogą być aktywne jednocześnie. Zalogowanie nie uruchamia łączenia.
+
+Planowane łączenie, jeszcze niezaimplementowane, ma iść jedną transakcją:
 
 - jest tylko koszyk gościa: ustaw `user_id`, wyczyść `session_id`;
 - są oba aktywne koszyki: sumuj ilości tego samego produktu w koszyku konta, a koszyk gościa ustaw na `abandoned`;

@@ -18,7 +18,7 @@ Aplikacja jest w JavaScript, bez TypeScriptu w kodzie źródłowym. Działa szki
 - zarządzanie sesją Supabase Auth.
 
 ### `apps/api` — Express 5
-API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publiczny odczyt katalogu i koszyk gościa. Zamówienia i płatności są planowane.
+API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publiczny odczyt katalogu, koszyk gościa i koszyk konta. Zamówienia i płatności są planowane.
 
 - REST API;
 - weryfikacja access tokenu Supabase biblioteką `jose` i publicznym JWKS; podpis, `iss`, `aud`, `exp` i UUID w `sub` są sprawdzane, a `req.auth.userId` dostaje dopiero zweryfikowany `sub`;
@@ -42,7 +42,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publi
 1. Nuxt komunikuje się z Express przez HTTPS/REST.
 2. Nuxt przekazuje access token Supabase w nagłówku `Authorization: Bearer <token>`.
 3. Express weryfikuje access token. Supabase Auth loguje użytkownika i wydaje JWT. Express nie przyjmuje haseł i nie używa `SUPABASE_SERVICE_ROLE_KEY` ani sekretu HMAC. Adres JWKS powstaje z `SUPABASE_URL`: `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. Jedna funkcja `createRemoteJWKSet` powstaje przy starcie procesu i nie pobiera kluczy, dopóki pierwsza chroniona trasa nie sprawdzi tokenu. Zestaw jest cache'owany przez 10 minut. Nieznany `kid` powoduje ponowne pobranie po 30 sekundach, więc rotacja klucza nie wymaga restartu. Dozwolone algorytmy to `ES256` i `RS256`. Brak nagłówka albo token odrzucony daje HTTP 401. Niedostępny JWKS daje HTTP 503, a nie 401. Middleware `requireAuth` nie obejmuje całego API. `GET /api/v1/health` i `GET /api/v1/health/ready` pozostają publiczne.
-4. Express sprawdza uprawnienia do konkretnej operacji i zasobu. `requireAdmin` wykonuje `SELECT 1 FROM public.user_roles WHERE user_id = $1 AND role = 'admin' LIMIT 1`. Brak wcześniejszego `req.auth.userId` daje HTTP 401. Brak wiersza daje HTTP 403. Błąd zapytania daje HTTP 503 i nie jest traktowany jako brak roli. Claim roli w JWT nie jest używany. Middleware nie jest globalne. Sprawdzenie właściciela zwykłych zasobów klienta pozostaje przy przyszłych endpointach.
+4. Express sprawdza uprawnienia do konkretnej operacji i zasobu. `requireAdmin` wykonuje `SELECT 1 FROM public.user_roles WHERE user_id = $1 AND role = 'admin' LIMIT 1`. Brak wcześniejszego `req.auth.userId` daje HTTP 401. Brak wiersza daje HTTP 403. Błąd zapytania daje HTTP 503 i nie jest traktowany jako brak roli. Claim roli w JWT nie jest używany. Middleware nie jest globalne. Koszyk konta sprawdza właściciela w SQL przez `req.auth.userId`. Własność pozostałych zasobów klienta pozostaje przy przyszłych endpointach.
 5. Operacje biznesowe są wykonywane w backendzie.
 6. Backend zapisuje dane w PostgreSQL.
 7. Frontend otrzymuje tylko dane niezbędne do wyświetlenia.
@@ -84,12 +84,12 @@ shop/
 
 ## 5. Moduły domenowe backendu
 
-Poniższy podział jest docelowy. Zaimplementowany jest publiczny odczyt katalogu i koszyk gościa. Pozostałe moduły nie są jeszcze zaimplementowane.
+Poniższy podział jest docelowy. Zaimplementowany jest publiczny odczyt katalogu, koszyk gościa i koszyk konta. Pozostałe moduły nie są jeszcze zaimplementowane.
 
 - `auth`: weryfikacja tożsamości i kontekst użytkownika; bez implementowania własnego systemu haseł.
 - `customers`: profile, typ klienta, adresy.
 - `catalog`: publiczny odczyt aktywnych kategorii i produktów przez `pg`. Zapytania jawnie filtrują `is_active = true`, bo rola z `DATABASE_URL` może omijać RLS. Szczegóły są po UUID. Nieaktywna kategoria nie zmienia wiersza produktu; w odpowiedzi szczegółów `category_id` jest wtedy `null`. Zapis, media i panel administratora nie są zaimplementowane.
-- `cart`: koszyk gościa jest odczytywany i zmieniany przez `GET /api/v1/cart` oraz `POST`, `PATCH` i `DELETE` na `/api/v1/cart/items`. Sesja gościa to ciasteczko `shop_guest_session` ustawiane wyłącznie przez `POST /api/v1/session/guest`. Surowy identyfikator zostaje w ciasteczku. Zapis koszyka używa tylko `hashGuestSessionId`, czyli SHA-256 tej wartości. Cena zostaje w katalogu. Dodanie i zmiana ilości idą jedną transakcją połączenia: koszyk jest blokowany, a kwota pozycji i suma są sprawdzane jako `bigint` przed zapisem. Kwota spoza bezpiecznego integera JavaScriptu daje HTTP 400 i wycofanie zapisu. Koszyk konta i łączenie koszyków nie są zaimplementowane.
+- `cart`: `GET /api/v1/cart` oraz `POST`, `PATCH` i `DELETE` na `/api/v1/cart/items` obsługują dwa niezależne koszyki. Brak nagłówka `Authorization` zostawia koszyk gościa. Nagłówek kieruje żądanie przez `requireAuth`, a właścicielem jest `req.auth.userId`. Ciasteczko nie wybiera wtedy koszyka i nie jest zmieniane. Sesja gościa to ciasteczko `shop_guest_session` ustawiane wyłącznie przez `POST /api/v1/session/guest`. Surowy identyfikator zostaje w ciasteczku. Zapis koszyka gościa używa tylko `hashGuestSessionId`, czyli SHA-256 tej wartości. Zapis koszyka konta wymaga `user_id` z tokenu i `session_id IS NULL`. Cena zostaje w katalogu. Dodanie i zmiana ilości idą jedną transakcją połączenia: koszyk jest blokowany, a kwota pozycji i suma są sprawdzane jako `bigint` przed zapisem. Kwota spoza bezpiecznego integera JavaScriptu daje HTTP 400 i wycofanie zapisu. Łączenie koszyków nie jest zaimplementowane.
 - `checkout`: walidacja danych i utworzenie zamówienia.
 - `orders`: odczyt, statusy i historia zamówień.
 - `payments`: inicjowanie płatności, webhooki, zwroty i rejestrowanie zdarzeń w `payment_events`. Powtórzenia żądań HTTP obsługuje `idempotency_keys`, nie ta tabela.
