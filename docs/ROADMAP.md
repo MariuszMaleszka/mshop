@@ -29,7 +29,7 @@ Acceptance:
 - brak sekretów w repo.
 
 ## Phase 2 — Database foundation — DONE
-Sześć kroków modelu bazodanowego jest zakończonych i zaakceptowanych na lokalnej bazie. Phase 3 nie jest rozpoczęta. Ta faza nie obejmuje checkoutu, webhooków ani API płatności.
+Dziesięć migracji modelu jest w repozytorium i na lokalnej bazie. API checkoutu, webhooków i płatności nie jest rozpoczęte.
 
 - [x] Dodać `profiles`, `user_roles` (wyłącznie rola `admin`) i `shop_profile` z jednym wierszem `seller_tax_status = unknown`.
 - [x] Dodać `customers`. `user_id` może być puste. Zgodny e-mail nie przypina zamówień gościa.
@@ -38,13 +38,17 @@ Sześć kroków modelu bazodanowego jest zakończonych i zaakceptowanych na loka
 - [x] Dodać `orders`, `order_items` i `order_status_history`: rozdzielone statusy płatności i realizacji, sumy netto, VAT i brutto oraz oba snapshoty podatkowe.
 - [x] Dodać `payments` i `payment_events`: jedna aktywna płatność, zgodność metody, waluty i kwoty z zamówieniem, zdarzenia operatora osobno od kluczy HTTP.
 - [x] Dodać `idempotency_keys` z unikalnością `(właściciel, operation, idempotency_key)`.
+- [x] Dodać dane identyfikacyjne sprzedawcy w `shop_profile`. Wiersz `unknown` zostaje bez nazwy i NIP.
+- [x] Dodać snapshot nazwy, NIP i adresu sprzedawcy w `orders`, przy pustej tabeli i bez klucza do `shop_profile`.
+- [x] Ograniczyć stawkę `standard` do `23.00`, `8.00` i `5.00` w produkcie oraz obu snapshotach pozycji.
+- [x] Dodać `inventory_reservations`: jedna rezerwacja na pozycję, termin zależny od `online` albo `cash`, RLS bez polityk klienta.
 - [x] Włączyć RLS na tabelach z tych migracji. Klient nie ma zapisu. Odczyt ma tylko tam, gdzie opisuje to `docs/DATABASE.md`.
 - [ ] Dodać `customer_addresses` (tylko `billing`).
 - [ ] Dodać `product_images`.
 - [ ] Dodać `store_settings` bez danych fiskalnych i sekretów.
 - [ ] Dodać seed demonstracyjny.
 
-Acceptance spełnione dla sześciu migracji:
+Acceptance spełnione dla zastosowanych migracji:
 - czysta baza powstaje z migracji, łącznie z jednym wierszem `shop_profile`.
 - check wiąże `tax_status` z `vat_rate`; waluta ma check formatu ISO 4217 i nie ma checka `= PLN`.
 - klient nie odczytuje cudzych zamówień ani koszyka przez PostgREST.
@@ -103,7 +107,7 @@ Acceptance:
 - pliki mają prawidłowe uprawnienia.
 
 ## Phase 6 — Cart & checkout
-Ciasteczko sesji gościa, API koszyka gościa, API koszyka konta i jawne łączenie koszyków są ukończone. Checkout nie jest rozpoczęty.
+Ciasteczko sesji gościa, API koszyka gościa, API koszyka konta i jawne łączenie koszyków są ukończone. Schemat snapshotu sprzedawcy, stawek VAT i rezerwacji stanu jest w bazie. Endpoint checkoutu nie istnieje.
 
 - [x] Ustawiać ciasteczko `shop_guest_session` i liczyć skrót SHA-256. Wiersz `carts` powstaje przy pierwszej pozycji gościa.
 - [x] Koszyk gościa identyfikowany ciasteczkiem `httpOnly`; w bazie tylko skrót sekretu.

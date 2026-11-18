@@ -91,9 +91,17 @@ Jeden wiersz. Status podatkowy sprzedawcy nie trafia do `store_settings`.
 
 - `id boolean PK` — check `id = true`; domyślnie `true`
 - `seller_tax_status text not null` — `registered`, `exempt` albo `unknown`; domyślnie `unknown`
+- `business_name text` — wymagana przy `registered` i `exempt`; po `btrim` nie może być pusta
+- `nip text` — `^[0-9]{10}$`; wymagany przy `registered` i `exempt`; przy `unknown` opcjonalny, a podany musi mieć ten format
+- `street text` — wymagana przy `registered` i `exempt`
+- `building_number text` — wymagany przy `registered` i `exempt`
+- `unit_number text` — opcjonalny; podany nie może być pusty po `btrim`
+- `postal_code text` — `^[0-9]{2}-[0-9]{3}$`; wymagany przy `registered` i `exempt`; przy `unknown` opcjonalny
+- `city text` — wymagane przy `registered` i `exempt`
+- `country_code varchar(2) not null` — `^[A-Z]{2}$`; domyślnie `PL`
 - `updated_at timestamptz not null`
 
-Migracja wstawia jeden wiersz ze statusem `unknown`.
+Migracja tożsamości dopisuje kolumny do istniejącego wiersza. Nie zmienia statusu `unknown` i nie wpisuje nazwy ani NIP. Kraj dostaje domyślne `PL`.
 
 - `registered` — czynny podatnik VAT
 - `exempt` — sprzedawca korzysta ze zwolnienia z VAT
@@ -148,12 +156,12 @@ Jeden sklep, bez `store_id`. Produkt ma jedną kategorię. Wariantów produktów
 
 | `tax_status` | `vat_rate` | Skutek przy sprzedawcy `registered` |
 |---|---|---|
-| `standard` | wymagany, większy od 0 i nie większy niż 100 | VAT liczony z kwoty brutto |
+| `standard` | wymagany, wyłącznie `23.00`, `8.00` albo `5.00` | VAT liczony z kwoty brutto |
 | `zero_rated` | dokładnie `0.00` | VAT = 0, netto = brutto |
 | `exempt` | null | VAT = 0, netto = brutto |
 | `not_subject` | null | VAT = 0, netto = brutto |
 
-Null w `vat_rate` sam nie oznacza zwolnienia. Lista stawek 23, 8 i 5 nie jest checkiem bazy. Dozwolone stawki `standard` sprawdza później Express.
+Null w `vat_rate` sam nie oznacza zwolnienia. Check `products_tax_check` wymaga `vat_rate is not null` przy `standard` i `zero_rated`.
 
 Stan magazynowy nie zależy od typu produktu. Usługa i produkt cyfrowy nie muszą go mieć. Zaawansowanego magazynu nie ma.
 
@@ -238,6 +246,14 @@ Sumy nagłówka równają się sumom pozycji. Sprawdza to transakcja checkoutu, 
 - `customer_type text not null` — `individual` lub `company`
 - `billing_snapshot jsonb not null`
 - `seller_tax_status_snapshot text not null` — tylko `registered` albo `exempt`
+- `seller_business_name_snapshot text not null` — po `btrim` niepuste
+- `seller_nip_snapshot text not null` — `^[0-9]{10}$`
+- `seller_street_snapshot text not null` — po `btrim` niepuste
+- `seller_building_number_snapshot text not null` — po `btrim` niepuste
+- `seller_unit_number_snapshot text null` — null albo po `btrim` niepuste
+- `seller_postal_code_snapshot text not null` — `^[0-9]{2}-[0-9]{3}$`
+- `seller_city_snapshot text not null` — po `btrim` niepuste
+- `seller_country_code_snapshot varchar(2) not null` — `^[A-Z]{2}$`
 - `currency char(3) not null` — bez wartości domyślnej; check `^[A-Z]{3}$`
 - `net_amount bigint not null`
 - `tax_amount bigint not null`
@@ -248,9 +264,9 @@ Sumy nagłówka równają się sumom pozycji. Sprawdza to transakcja checkoutu, 
 - `created_at timestamptz not null`
 - `updated_at timestamptz not null`
 
-`gross_amount = net_amount + tax_amount`. Wszystkie trzy kwoty są nieujemne. `gross_amount` jest kwotą przekazywaną operatorowi płatności. Nie ma kolumny `orders.status`.
+`gross_amount = net_amount + tax_amount`. Wszystkie trzy kwoty są nieujemne. `gross_amount` jest kwotą przekazywaną operatorowi płatności. Nie ma kolumny `orders.status`. Snapshot sprzedawcy nie ma klucza obcego do `shop_profile`. Kolumny dodano przy pustej tabeli `orders`, bez wartości domyślnych.
 
-Na `orders` są dwa klucze unikalne obok `order_number`: `(id, currency)` oraz `(id, payment_method, currency, gross_amount)`. Służą kluczom obcym pozycji i płatności. Nie zastępują klucza głównego.
+Na `orders` są klucze unikalne obok `order_number`: `(id, currency)`, `(id, payment_method)` oraz `(id, payment_method, currency, gross_amount)`. Służą kluczom obcym pozycji, rezerwacji i płatności. Nie zastępują klucza głównego. `(id, payment_method)` jest celem klucza rezerwacji; `id` jest już unikalne, więc ten klucz nie odrzuca istniejących wierszy.
 
 `billing_snapshot` zawiera wyłącznie dane z chwili zakupu: `first_name`, `last_name`, `company_name`, `nip`, `phone`, `recipient`, `street`, `building_number`, `apartment_number`, `postal_code`, `city`, `country_code`. Kształt sprawdza Express.
 
@@ -285,13 +301,32 @@ Checki pozycji:
 
 - `line_gross_amount = unit_gross_amount * quantity`
 - `line_gross_amount = line_net_amount + line_tax_amount`
-- `standard`: stawka większa od 0 i nie większa niż 100, podatek nieujemny
-- `zero_rated`: stawka `0`, podatek `0`, netto = brutto
+- `standard`: stawka wyłącznie `23.00`, `8.00` albo `5.00` i `is not null`; podatek nieujemny
+- `zero_rated`: stawka `0.00` i `is not null`, podatek `0`, netto = brutto
 - `exempt` i `not_subject`: stawka null, podatek `0`, netto = brutto
 
 Dla `standard` podatek nie musi być większy od zera. Zaokrąglenie bardzo małej kwoty może dać zero.
 
-Zgodność waluty pozycji z zamówieniem wymusza klucz obcy `(order_id, currency)` → `orders (id, currency)` z `on delete cascade`. Usunięcie produktu zeruje `product_id` i zostawia snapshot. Późniejsza zmiana produktu, jego ceny, waluty albo stawki nie zmienia pozycji.
+Zgodność waluty pozycji z zamówieniem wymusza klucz obcy `(order_id, currency)` → `orders (id, currency)` z `on delete cascade`. Usunięcie produktu zeruje `product_id` i zostawia snapshot. Późniejsza zmiana produktu, jego ceny, waluty albo stawki nie zmienia pozycji. `UNIQUE (id, product_id)` jest celem złożonego klucza rezerwacji.
+
+### `inventory_reservations`
+
+Jedna rezerwacja na pozycję zamówienia. `payment_method` jest kopią metody zamówienia i musi zgadzać się z `orders (id, payment_method)`.
+
+- `id uuid PK`
+- `order_id uuid not null references orders(id) on delete restrict`
+- `order_item_id uuid not null references order_items(id)` — unikalne
+- `product_id uuid null references products(id) on delete set null`
+- `payment_method text not null` — `online` albo `cash`
+- `quantity integer not null` — check `>= 1`
+- `status text not null` — `active`, `consumed`, `released` albo `expired`
+- `expires_at timestamptz null`
+- `created_at timestamptz not null`
+- `updated_at timestamptz not null`
+
+Aktywna rezerwacja wymaga produktu. Aktywna rezerwacja `online` wymaga `expires_at`, a aktywna rezerwacja `cash` wymaga pustego `expires_at`. Złożony klucz `(order_item_id, product_id)` wskazuje `order_items (id, product_id)`, z `on update cascade` i `on delete set null (product_id)`. Usunięcie produktu przy rezerwacji `consumed`, `released` albo `expired` zeruje `product_id` i zostawia `order_item_id`. Przy statusie `active` ten sam zapis odrzuca `CHECK` i całe usunięcie produktu się wycofuje.
+
+RLS jest włączone. Nie ma polityk. `anon` i `authenticated` nie mają uprawnień.
 
 ### `order_status_history`
 
@@ -449,6 +484,10 @@ Zastosowane lokalnie, w tej kolejności:
 4. `20261117170000_orders_and_status_history.sql` — `orders`, `order_items`, `order_status_history`.
 5. `20261117180000_payments_and_payment_events.sql` — `payments`, `payment_events` oraz unikalność `(id, payment_method, currency, gross_amount)` na `orders`.
 6. `20261117190000_idempotency_keys.sql` — `idempotency_keys`.
+7. `20261118100000_shop_profile_seller_identity.sql` — dane identyfikacyjne w `shop_profile`.
+8. `20261118100100_order_seller_snapshot.sql` — snapshot sprzedawcy w `orders`.
+9. `20261118100200_standard_vat_rates.sql` — stawki `standard` 23, 8 i 5.
+10. `20261118100300_inventory_reservations.sql` — `inventory_reservations` oraz klucze `(id, product_id)` i `(id, payment_method)`.
 
 RLS i indeksy tych tabel powstały razem z nimi.
 
