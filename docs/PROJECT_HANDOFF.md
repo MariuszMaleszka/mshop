@@ -1,7 +1,7 @@
 # Punkt kontrolny projektu – sklep internetowy
 
-**Stan na:** 18 listopada 2026, po audycie koszyka konta  
-**Status bieżący:** Koszyk gościa jest na `main` (`908ffca`). Koszyk konta jest zaimplementowany w drzewie roboczym i przeszedł audyt Step 10C. Nie jest jeszcze commitowany. Łączenie koszyków i checkout nie są rozpoczęte.
+**Stan na:** 18 listopada 2026, po wypchnięciu koszyka konta  
+**Status bieżący:** Koszyk gościa i koszyk konta są na `main` (`36972c1`). Audyt Step 10C nie wykazał ustaleń blokujących. Łączenie koszyków i checkout nie są rozpoczęte.
 
 > Ten plik jest krótkim punktem wznowienia pracy dla Cursor i ChatGPT. Nie zastępuje dokumentacji technicznej projektu (`ARCHITECTURE.md`, `API.md`, `ROADMAP.md`) ani raportów z wykonania. W razie rozbieżności najpierw sprawdź aktualny kod i właściwą dokumentację projektu. Nie zakładaj, że opis w tym pliku jest nowszy niż repozytorium.
 
@@ -118,7 +118,7 @@ Zakończona: `apps/api` (Express 5, health endpoint), `apps/web` (Nuxt 4.6.4), `
 - Step 9A – wzmocnienie parsera i redakcji sesji gościa: ukończony. Jest na `main` w `d97c65a`.
 - Step 9B i 9B.1 – API koszyka gościa, wyścig tworzenia koszyka i kwoty: ukończone. Są na `main` w `908ffca`.
 - Step 9C – audyt koszyka gościa: wykonany. Brak ustaleń krytycznych, wysokich i średnich. Krok można zamknąć.
-- Step 10B – koszyk konta na tych samych czterech ścieżkach: zaimplementowany w drzewie roboczym. Nie jest jeszcze commitowany.
+- Step 10B – koszyk konta na tych samych czterech ścieżkach: ukończony. Jest na `main` w `36972c1`.
 - Step 10C – audyt koszyka konta i gościa: wykonany. Brak ustaleń krytycznych, wysokich i średnich. Krok można zamknąć.
 
 ### Step 8 – istniejąca sesja gościa
@@ -136,7 +136,7 @@ Zakończona: `apps/api` (Express 5, health endpoint), `apps/web` (Nuxt 4.6.4), `
 
 ### Phase 6 – koszyk gościa i koszyk konta
 
-**Status: oba koszyki są zaimplementowane. Koszyk gościa jest na `main`. Koszyk konta jest w drzewie roboczym i nie został jeszcze commitowany. Nie implementować żadnego z nich ponownie.**
+**Status: oba koszyki są na `main`. Nie implementować żadnego z nich ponownie.**
 
 Te same endpointy:
 
@@ -186,6 +186,6 @@ Koszyk gościa i koszyk konta nie są już zadaniami do zaplanowania. Poniższe 
 
 Nie wykonuj samodzielnie żadnych zmian tylko dlatego, że przeczytałeś ten plik.
 
-Koszyk gościa jest ukończony i jest na `main`. Koszyk konta jest ukończony w drzewie roboczym. Nie traktuj żadnego z nich jako pracy w toku i nie implementuj ich od nowa.
+Koszyk gościa i koszyk konta są ukończone i są na `main`. Nie traktuj żadnego z nich jako pracy w toku i nie implementuj ich od nowa.
 
 Następny etap wybiera użytkownik. Bez osobnej zgody nie zaczynaj łączenia koszyków, logowania, checkoutu, płatności, frontendu ani CORS.
