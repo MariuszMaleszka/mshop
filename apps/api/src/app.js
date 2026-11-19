@@ -3,6 +3,10 @@ import { HttpError } from './http/errors.js'
 import { errorHandler, notFoundHandler } from './http/error-handler.js'
 import { createLogger } from './http/logger.js'
 import { requestContext } from './http/request-context.js'
+import {
+  P24_WEBHOOK_BODY_LIMIT,
+  P24_WEBHOOK_PATH,
+} from './p24/webhook-routes.js'
 
 function cors(webOrigin) {
   return function corsMiddleware(req, res, next) {
@@ -34,6 +38,13 @@ export function createApp(config, options = {}) {
   const logger = options.logger ?? createLogger({ nodeEnv: config.nodeEnv })
 
   app.disable('x-powered-by')
+  app.use(
+    P24_WEBHOOK_PATH,
+    express.raw({
+      type: () => true,
+      limit: P24_WEBHOOK_BODY_LIMIT,
+    }),
+  )
   app.use(express.json())
   app.use(cors(config.webOrigin))
   app.use(requestContext(logger))

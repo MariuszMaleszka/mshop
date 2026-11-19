@@ -23,6 +23,12 @@ export function errorHandler(logger) {
       return
     }
 
+    if (err?.type === 'entity.too.large') {
+      logger.warn('request.too_large', { requestId })
+      clientError(res, 413, 'PAYLOAD_TOO_LARGE', 'Request validation failed')
+      return
+    }
+
     if (err instanceof HttpError) {
       logger.warn('request.http_error', {
         requestId,

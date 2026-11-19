@@ -1,6 +1,8 @@
 import { createAccessTokenVerifier } from './auth/tokens.js'
 import { registerCartRoutes } from './cart/routes.js'
 import { registerCheckoutRoutes } from './checkout/routes.js'
+import { createP24Client } from './p24/client.js'
+import { registerP24WebhookRoutes } from './p24/webhook-routes.js'
 import { registerCatalogRoutes } from './catalog/routes.js'
 import { registerGuestSessionRoutes } from './session/routes.js'
 import { createApp } from './app.js'
@@ -31,6 +33,7 @@ const database = createDatabase({
 const accessTokens = createAccessTokenVerifier({
   supabaseUrl: config.supabaseUrl,
 })
+const p24Client = config.p24 ? createP24Client(config.p24) : null
 const app = createApp(config, {
   logger,
   database,
@@ -40,6 +43,13 @@ const app = createApp(config, {
     registerGuestSessionRoutes(router, { nodeEnv: config.nodeEnv })
     registerCartRoutes(router, { database })
     registerCheckoutRoutes(router, { database, p24: config.p24 })
+    registerP24WebhookRoutes(router, {
+      p24: config.p24,
+      database,
+      verifyTransaction: p24Client
+        ? (input) => p24Client.verifyTransaction(input)
+        : undefined,
+    })
   },
 })
 const server = app.listen(config.port, () => {
