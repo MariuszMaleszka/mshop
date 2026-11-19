@@ -5,7 +5,8 @@ Nie oznaczaj zadania jako DONE bez spełnienia kryteriów akceptacji.
 
 ## Phase 0 — Decyzje i przygotowanie
 - [x] Zakup gościnny jest dozwolony. Historia konta obejmuje zamówienia złożone po zalogowaniu.
-- [ ] Wybrać operatora płatności (`przelewy24` albo `stripe`) i środowisko testowe.
+- [x] Wybrać operatora płatności online MVP: Przelewy24. Stripe nie wchodzi do tej wersji. Checkout nie zależy od API operatora.
+- [ ] Podłączyć środowisko testowe Przelewy24.
 - [x] Zatwierdzić model cen, waluty i VAT dla schematu (`docs/DATABASE.md`).
 - [ ] Potwierdzić dokumenty sprzedaży, moment obowiązku podatkowego i retencję danych.
 - [ ] Potwierdzić hosting i środowiska.
@@ -107,12 +108,13 @@ Acceptance:
 - pliki mają prawidłowe uprawnienia.
 
 ## Phase 6 — Cart & checkout
-Ciasteczko sesji gościa, API koszyka gościa, API koszyka konta i jawne łączenie koszyków są ukończone. Schemat snapshotu sprzedawcy, stawek VAT i rezerwacji stanu jest w bazie. Endpoint checkoutu nie istnieje.
+Ciasteczko sesji gościa, API koszyka gościa, API koszyka konta i jawne łączenie koszyków są ukończone. Schemat snapshotu sprzedawcy, stawek VAT i rezerwacji stanu jest w bazie. Endpoint checkoutu nie istnieje. Checkout pozostaje zablokowany przy `seller_tax_status = unknown` i nie startuje sprzedaży, dopóki dane sprzedawcy nie zostaną świadomie uzupełnione. Tymczasowa precyzja VAT jest opisana w `docs/DATABASE.md`. Agregacja i zaokrąglanie VAT na dokumentach mają status `OPEN — ACCOUNTANT CONFIRMATION REQUIRED` i nie są warunkiem zapisu tej decyzji.
 
 - [x] Ustawiać ciasteczko `shop_guest_session` i liczyć skrót SHA-256. Wiersz `carts` powstaje przy pierwszej pozycji gościa.
 - [x] Koszyk gościa identyfikowany ciasteczkiem `httpOnly`; w bazie tylko skrót sekretu.
 - [x] Koszyk zalogowanego klienta i jeden aktywny koszyk na właściciela. Właścicielem jest `req.auth.userId`. Koszyk gościa nie jest przy tym łączony.
-- [x] Połączenie koszyka gościa z koszykiem konta po zalogowaniu. Frontend woła `POST /api/v1/cart/merge`. Sam token nie łączy koszyków.
+- [x] Połączenie koszyka gościa z koszykiem konta w API. `POST /api/v1/cart/merge` jest zaimplementowane. Sam token nie łączy koszyków.
+- [ ] Wywołanie `POST /api/v1/cart/merge` z `apps/web` po zalogowaniu.
 - [x] Dodawanie, usuwanie i zmiana ilości w koszyku gościa i w koszyku konta.
 - [ ] Ponowna walidacja kwoty, dostępności i zgodności waluty.
 - [ ] Checkout zablokowany przy `seller_tax_status = unknown`.

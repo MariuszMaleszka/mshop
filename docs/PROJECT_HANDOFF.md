@@ -72,7 +72,7 @@ Przed rozpoczęciem kolejnego zadania:
 - Zamówienie przechowuje snapshot produktu i danych rozliczeniowych.
 - Status płatności i realizacji zamówienia są rozdzielone.
 - Webhook operatora płatności jest źródłem prawdy o płatności online; wymaga weryfikacji podpisu, kwoty, waluty, zamówienia i idempotencji.
-- Operator płatności nie został wybrany (rozważane Przelewy24 lub Stripe).
+- Operatorem płatności online w MVP jest Przelewy24. Stripe nie wchodzi do tej wersji. Zamówienie i checkout nie wołają API operatora; późniejsza integracja ma być adapterem, bez systemu wielu operatorów na zapas.
 - Checkout, płatności i webhooki nie są jeszcze implementowane.
 - MVP nie obejmuje wariantów produktów, wysyłki, rezerwacji terminów, kuponów, zaawansowanego magazynu ani fakturowania. Tabela `inventory_reservations` jest schematem rezerwacji stanu przy checkoutcie, nie rezerwacją terminów.
 
@@ -104,7 +104,7 @@ Nie dodawaj migracji ani nie zmieniaj RLS bez jawnego zakresu i akceptacji użyt
 - `standard` w produkcie, snapshocie katalogowym i snapshocie zastosowanym dopuszcza tylko `23.00`, `8.00` i `5.00`, z jawnym `IS NOT NULL`. `zero_rated` to `0.00`. `exempt` i `not_subject` mają stawkę `NULL`.
 - Przy sprzedawcy zwolnionym z VAT pozycja zamówienia ma mieć status `exempt` i `vat_rate = NULL`. Snapshot katalogowy zostaje stawką produktu.
 - Zamówienie ma snapshot nazwy, NIP i adresu sprzedawcy. Kolumny są `NOT NULL` i doszły przy pustej tabeli `orders`. Nie ma klucza obcego do `shop_profile`.
-- Baza nie liczy VAT. Propozycja techniczna, nadal bez potwierdzenia księgowego: od brutto, half-up do grosza, osobno na pozycji, na liczbach całkowitych.
+- Baza nie liczy VAT. Tymczasowa polityka techniczna, niezatwierdzona księgowo: cena katalogowa jest brutto i ma dokładność dwóch miejsc po przecinku, w bazie jako grosze. VAT od stawki procentowej liczy się „w stu”: brutto × stawka / (100 + stawka), bez zaokrąglania wyników pośrednich. VAT wykazywany w dokumentach zaokrągla się do grosza metodą half-up, a netto jest różnicą brutto i tego VAT. Arytmetyka ma być dziesiętna albo całkowita, nie zwykłym `Number` JavaScriptu. Kalkulatora jeszcze nie ma.
 - Ustalono: `line_gross = unit_gross * quantity`; `line_gross = line_net + line_tax`; kwoty pozostają integerami.
 - `inventory_reservations`: jedna rezerwacja na pozycję. Aktywna wymaga produktu. Aktywna `online` wymaga `expires_at`, aktywna `cash` wymaga pustego `expires_at`. Metoda jest kopią `orders.payment_method` i jest spięta kluczem `(order_id, payment_method)`.
 - PostgreSQL 17.12 nie przyjmuje `ON UPDATE SET NULL` z listą kolumn. Złożony klucz rezerwacji używa `ON UPDATE CASCADE` i `ON DELETE SET NULL (product_id)`. Usunięcie produktu przy rezerwacji terminalnej zeruje `product_id` i zostawia `order_item_id`. Przy statusie `active` ten zapis odrzuca check i całe usunięcie produktu się wycofuje.
@@ -190,12 +190,14 @@ Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` nie 
 ### Późniejsze, osobne etapy
 
 1. Integracja frontendu i obsługa CORS/cookie credentials – po ustaleniu domen i sposobu wdrożenia. Frontend nie wywołuje jeszcze `POST /api/v1/cart/merge`.
-2. Checkout, zamówienia, płatności, worker rezerwacji i webhooki – API nadal niezaimplementowane. Schemat sprzedawcy, stawek i rezerwacji jest gotowy. Przed kodem checkoutu zostaje potwierdzenie wzoru VAT i wybór operatora płatności.
+2. Checkout, zamówienia, płatności, worker rezerwacji i webhooki – API nadal niezaimplementowane. Schemat sprzedawcy, stawek i rezerwacji jest gotowy. Operator online MVP to Przelewy24, ale checkout nadal blokuje `seller_tax_status = unknown`, a dane sprzedawcy trzeba uzupełnić świadomie przed sprzedażą. Przed dokumentami sprzedaży zostaje otwarte potwierdzenie księgowe agregacji VAT.
 
 ## 9. Otwarte decyzje na przyszłość
 
-- Potwierdzenie księgowe wzoru VAT integer/half-up. Baza stawek 23/8/5 już ogranicza `standard`, ale sama nie liczy podatku.
-- Wybór operatora płatności: Przelewy24 lub Stripe.
+- Przelewy24 — decyzja podjęta. Jedyny operator online w MVP. Stripe nie jest implementowany. Schemat nadal dopuszcza `stripe`, żeby później dodać adapter bez zmiany tej decyzji.
+- Polityka precyzji VAT — decyzja techniczna podjęta tymczasowo. Opis jest w `docs/DATABASE.md`. To nie jest zatwierdzona polityka księgowa.
+- Sposób agregacji i zaokrąglania VAT na dokumentach — `OPEN — ACCOUNTANT CONFIRMATION REQUIRED`. Nie wybrano, czy grosz half-up liczyć osobno na pozycji, czy po zsumowaniu wartości w stawce. Otwarte są też różnice groszowe między tymi metodami oraz to, czy prezentacja kwot będzie prawidłowa na dokumentach sprzedaży sklepu.
+- Status sprzedawcy `unknown` — nadal blokuje checkout. Dane sprzedawcy wymagają świadomego uzupełnienia przed uruchomieniem sprzedaży.
 - Szczegóły wysyłki i obsługi produktów fizycznych.
 - Fakturowanie i dokumenty sprzedażowe.
 - Retencja danych.

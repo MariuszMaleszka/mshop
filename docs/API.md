@@ -195,7 +195,7 @@ Surowy identyfikator jest tylko w ciasteczku. SHA-256 tego identyfikatora, zapis
 Żądanie z Nuxt do API jest cross-origin. Przeglądarka zapisze i odeśle ciasteczko dopiero wtedy, gdy klient wyśle `credentials: 'include'`, a API doda `Access-Control-Allow-Credentials`. Obecny CORS tego nie włącza.
 
 ## 6. Koszyk
-Zaimplementowane są koszyk gościa i koszyk konta. Łączenie koszyków nie jest zaimplementowane i nie dzieje się przy wejściu na te ścieżki.
+Zaimplementowane są koszyk gościa, koszyk konta i `POST /api/v1/cart/merge`. Te cztery ścieżki same koszyków nie scalają.
 
 Te same cztery ścieżki wybierają koszyk po nagłówku `Authorization`. Brak nagłówka oznacza koszyk gościa. Nagłówek, także zapisany inną wielkością liter, oznacza koszyk konta i przechodzi przez `requireAuth`. Pusty, błędny albo wygasły token daje HTTP 401 `UNAUTHORIZED`. Poprawne ciasteczko gościa nie otwiera wtedy koszyka gościa.
 
@@ -237,7 +237,7 @@ Błąd bazy daje HTTP 503 `SERVICE_UNAVAILABLE` bez treści SQL. Kwota poza kont
 
 Własność jest w zapytaniu. Koszyk gościa to aktywny wiersz z `user_id` pustym i `session_id` równym skrótowi ciasteczka. Koszyk konta to aktywny wiersz z `user_id` równym `req.auth.userId` i `session_id` pustym. Zmiana koszyka bierze najpierw transakcyjną blokadę `pg_advisory_xact_lock` swojego właściciela. Odczyt tej blokady nie bierze. Utworzenie używa `INSERT ... ON CONFLICT DO NOTHING` na właściwym indeksie częściowym, a potem osobnego `SELECT ... FOR UPDATE` na tym samym połączeniu. Drugie polecenie ma nową migawkę, więc widzi koszyk utworzony przez równoległe żądanie. `updated_at` koszyka nie jest przy tym ruszane. Pozycja używa unikalności `(cart_id, product_id)` i dodaje ilość. Suma kwot jest liczona na `bigint` pod blokadą koszyka, zanim pozycja zostanie zapisana. Równoległe dodania różnych produktów czekają na tę samą blokadę. Jeden właściciel ma jeden aktywny koszyk danego rodzaju.
 
-`POST /api/v1/cart/merge` scala koszyk gościa z koszykiem konta. Woła go frontend po zalogowaniu. Sam nagłówek `Authorization` na czterech ścieżkach powyżej nie uruchamia scalania. Endpoint zawsze przechodzi przez `requireAuth`. Brak albo błędny token daje HTTP 401. Awaria weryfikacji tokenu daje HTTP 503. Właścicielem jest wyłącznie `req.auth.userId`. Body nie niesie właściciela ani sesji; pola `user_id` i `session_id` są ignorowane.
+`POST /api/v1/cart/merge` scala koszyk gościa z koszykiem konta. Ma go wywołać frontend po zalogowaniu. Aplikacja `apps/web` jeszcze tego nie robi. Sam nagłówek `Authorization` na czterech ścieżkach powyżej nie uruchamia scalania. Endpoint zawsze przechodzi przez `requireAuth`. Brak albo błędny token daje HTTP 401. Awaria weryfikacji tokenu daje HTTP 503. Właścicielem jest wyłącznie `req.auth.userId`. Body nie niesie właściciela ani sesji; pola `user_id` i `session_id` są ignorowane.
 
 Koszyk gościa bierze się z jednego poprawnego ciasteczka `shop_guest_session` i z `hashGuestSessionId`. Brak ciasteczka, zły format albo więcej niż jedno wystąpienie oznacza, że nie ma czego scalać: endpoint zwraca aktualny koszyk konta i nie tworzy sesji ani wiersza `carts`. Ciasteczko nie jest przy tym ustawiane ani usuwane.
 
@@ -252,17 +252,25 @@ Cena pozycji koszyka nie jest utrwalana jako cena sprzedaży.
 Backend sprawdza aktywność produktu, ilość, aktualną kwotę należną i zgodność waluty produktu z walutą koszyka. Nie ufaj cenom, podatkowi ani walucie przesłanym przez frontend.
 
 ## 7. Checkout i zamówienia
-Planowane:
-- `POST /checkout` — walidacja koszyka i danych, utworzenie zamówienia oraz płatności.
+`POST /api/v1/checkout` sprawdza kontrakt i warunki wstępne. Nie tworzy zamówienia, pozycji, płatności ani rezerwacji i nie zapisuje `idempotency_keys`. Nie woła operatora płatności. Gdy kontrole przejdą, zwraca HTTP 501 `CHECKOUT_NOT_IMPLEMENTED`.
+
+Nagłówek `Idempotency-Key` jest wymagany: jeden, od 1 do 255 widocznych znaków ASCII. Na tym etapie nie jest zapisywany. Body: `email`, `customerType` (`individual` albo `company`), `paymentMethod` (`online` albo `cash`) oraz `billing` zgodny ze snapshotem rozliczeniowym (`firstName`, `lastName`, `companyName`, `nip`, `phone`, `recipient`, `street`, `buildingNumber`, `apartmentNumber`, `postalCode`, `city`, `countryCode`). Adresu wysyłki nie ma. Osoba fizyczna wymaga imienia i nazwiska. Firma wymaga nazwy i NIP z 10 cyfr. Ulica, numer budynku, kod `NN-NNN`, miasto i dwuliterowy kraj są zawsze wymagane.
+
+Właściciela wybiera nagłówek `Authorization`, tak jak w koszyku. Konto przechodzi przez `requireAuth`. Gość wymaga jednego poprawnego `shop_guest_session`. Checkout nie scala koszyków i nie czyta identyfikatora koszyka z body.
+
+Kolejność: klucz, body, właściciel, potem odczyt `shop_profile`. Status `unknown` daje HTTP 409 `SELLER_TAX_STATUS_UNKNOWN` i nie otwiera transakcji. Brak koszyka właściciela daje HTTP 404. Sam koszyk `converted` daje HTTP 409 `CART_CONVERTED`. Pusty koszyk `active` daje HTTP 409 `CART_EMPTY`. Nieaktywny albo brakujący produkt daje HTTP 409 `PRODUCT_UNAVAILABLE`. Te odpowiedzi powstają z samych `SELECT`. Dostępność magazynowa nie jest jeszcze sprawdzana.
+
+Planowane później:
+- utworzenie zamówienia oraz płatności w `POST /api/v1/checkout`;
 - `GET /orders` — zamówienia zalogowanego klienta.
 - `GET /orders/:id` — szczegóły własnego zamówienia.
 - `POST /orders/:id/cancel` — anulowanie, jeśli reguły biznesowe na to pozwalają.
 
-Checkout jest zablokowany, gdy `seller_tax_status` wynosi `unknown`.
+Checkout jest zablokowany, gdy `seller_tax_status` wynosi `unknown`. Ten etap nie otwiera transakcji.
 
-Checkout jest jedną transakcją: ponowna walidacja katalogu, snapshot rozliczeniowy, snapshot katalogowy i zastosowany snapshot podatku, sumy `net_amount`, `tax_amount` i `gross_amount`, płatność oraz oznaczenie koszyka jako przekonwertowanego. Jeśli klient bazy nie obejmuje tych zapisów jedną transakcją, ta sama kolejność idzie do funkcji SQL. Nie twórz zamówienia w stanie częściowym.
+Późniejszy zapis zamówienia ma być jedną transakcją: ponowna walidacja katalogu, snapshot rozliczeniowy, snapshot katalogowy i zastosowany snapshot podatku, sumy `net_amount`, `tax_amount` i `gross_amount`, płatność oraz oznaczenie koszyka jako przekonwertowanego. Jeśli klient bazy nie obejmuje tych zapisów jedną transakcją, ta sama kolejność idzie do funkcji SQL. Nie twórz zamówienia w stanie częściowym.
 
-`gross_amount` jest kwotą do zapłaty. Dla `standard` przy czynnym podatniku podatek jest różnicą brutto i netto, liczoną osobno na pozycji, połową w górę do grosza, na liczbach całkowitych. Dla `zero_rated`, `exempt`, `not_subject` oraz przy sprzedawcy `exempt` podatek wynosi 0, a netto równa się brutto. Zamówienie nie zapisuje statusu `unknown`.
+`gross_amount` jest kwotą do zapłaty. Dla `standard` przy czynnym podatniku tymczasowa polityka techniczna jest w `docs/DATABASE.md`: metoda „w stu”, bez zaokrąglania wyników pośrednich. Agregacja pozycji albo stawek przed half-up ma status `OPEN — ACCOUNTANT CONFIRMATION REQUIRED`. Dla `zero_rated`, `exempt`, `not_subject` oraz przy sprzedawcy `exempt` podatek wynosi 0, a netto równa się brutto. Zamówienie nie zapisuje statusu `unknown`.
 
 `GET /orders` obejmuje zamówienia, których `user_id` jest kontem z tokenu. Zamówienie gościa nie dostaje tego powiązania przez sam e-mail.
 
@@ -272,7 +280,7 @@ Planowane. Webhook nie jest zaimplementowany i nie korzysta z `Idempotency-Key`.
 - `POST /webhooks/payments/:provider` — webhook operatora, bez zwykłej autoryzacji użytkownika. Express sprawdza podpis, kwotę, walutę, zamówienie i status, a zdarzenie zapisuje idempotentnie.
 - `POST /admin/orders/:id/mark-paid` — ręczne potwierdzenie gotówki przez administratora, z audytem.
 
-Operator nie jest wybrany. Kontrakt przewiduje `przelewy24` albo `stripe` oraz gotówkę. `payments.amount` równa się `orders.gross_amount`, a `payments.currency` równa się `orders.currency`. Po utworzeniu tych pól nie zmieniamy.
+Operatorem online w MVP jest Przelewy24. Kontrakt nadal przewiduje gotówkę, a schemat zachowuje `stripe` na później. Integracji operatora jeszcze nie ma. `payments.amount` równa się `orders.gross_amount`, a `payments.currency` równa się `orders.currency`. Po utworzeniu tych pól nie zmieniamy.
 
 Nie uznawaj płatności na podstawie query parametru ani powrotu klienta na stronę sukcesu. `cancelled` oznacza płatność niedoszłą. Zwrot po wpłacie to `refunded` albo `partially_refunded`.
 
@@ -291,9 +299,9 @@ Planowane. Wszystkie endpointy `/admin/*` mają użyć `requireAuth` i `requireA
 Wspólny schemat czyta `page` i `limit` z query string. `page` domyślnie wynosi 1, `limit` domyślnie 20, a najwyższy `limit` to 100. Obie wartości muszą być dodatnimi liczbami całkowitymi. `offset` wynosi `(page - 1) * limit`. Sortowanie, filtry domenowe i paginacja kursorowa nie są jeszcze zaimplementowane.
 
 ## 11. Idempotencja
-Planowane. Nagłówek `Idempotency-Key` będzie wymagany dla:
+`POST /api/v1/checkout` już wymaga nagłówka `Idempotency-Key`, ale jeszcze go nie zapisuje i nie odtwarza poprzedniej odpowiedzi. Zapis wiersza będzie wymagany dla:
 
-- `POST /checkout`
+- `POST /api/v1/checkout`
 - `POST /payments/:id/retry`
 - `POST /orders/:id/cancel`
 - `POST /admin/orders/:id/mark-paid`

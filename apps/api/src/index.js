@@ -1,5 +1,6 @@
 import { createAccessTokenVerifier } from './auth/tokens.js'
 import { registerCartRoutes } from './cart/routes.js'
+import { registerCheckoutRoutes } from './checkout/routes.js'
 import { registerCatalogRoutes } from './catalog/routes.js'
 import { registerGuestSessionRoutes } from './session/routes.js'
 import { createApp } from './app.js'
@@ -38,6 +39,7 @@ const app = createApp(config, {
     registerCatalogRoutes(router, { database })
     registerGuestSessionRoutes(router, { nodeEnv: config.nodeEnv })
     registerCartRoutes(router, { database })
+    registerCheckoutRoutes(router, { database })
   },
 })
 const server = app.listen(config.port, () => {

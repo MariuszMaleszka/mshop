@@ -10,7 +10,7 @@ Dokument opisuje zaakceptowany schemat PostgreSQL. Nie jest migracją. Źródłe
 - Kwoty: `bigint` w najmniejszej jednostce waluty. Dla PLN są to grosze. Zakaz `float` i `real`.
 - Waluta: `char(3)`, kod alfabetyczny ISO 4217. Check formatu `^[A-Z]{3}$`. Brak checka ograniczającego wartość do `PLN`, więc schemat nie wyklucza późniejszego `EUR` ani `USD`. `products.currency` i `carts.currency` mają domyślnie `PLN`. `orders`, `order_items` i `payments` nie mają domyślnej waluty.
 - Na MVP Express przyjmuje wyłącznie `PLN`. Kursów i przeliczania nie ma.
-- `price_amount` produktu jest kwotą należną za sztukę. Przy sprzedawcy `registered` i `tax_status = standard` jest to cena brutto z VAT. W pozostałych przypadkach jest to cała kwota do zapłaty, bez wyliczania sztucznego podatku.
+- `price_amount` produktu jest ceną brutto za sztukę, z dokładnością do dwóch miejsc po przecinku. W bazie ta dokładność jest zapisana jako `bigint` w groszach, nie jako liczba zmiennoprzecinkowa. Przy sprzedawcy `registered` i `tax_status = standard` zawiera VAT. W pozostałych przypadkach jest to cała kwota do zapłaty, bez wyliczania sztucznego podatku.
 - Tabele dopisywane (`order_status_history`, `payment_events`, `idempotency_keys`) nie mają `updated_at`.
 - Nie edytuj produkcyjnej bazy ręcznie bez migracji.
 
@@ -228,7 +228,25 @@ Checkout jest jedną transakcją. Przy `shop_profile.seller_tax_status = unknown
 
 Express sprawdza, że każdy produkt koszyka ma tę samą walutę co koszyk. Na MVP ta waluta musi być `PLN`. Do zamówienia i płatności trafia kod z tej chwili. Później się nie zmienia.
 
-Dla `standard`, przy sprzedawcy `registered`: podatek jest różnicą brutto i netto, zaokrąglaną połową w górę do grosza, osobno na każdej pozycji, na liczbach całkowitych. Dla `zero_rated`, `exempt` i `not_subject` podatek wynosi 0, a netto równa się brutto. Stawki nie wyciąga się wtedy z ceny. Schemat nie liczy VAT. Dokładny wzór na liczbach całkowitych ustala się przed implementacją checkoutu.
+Dla `zero_rated`, `exempt` i `not_subject` podatek wynosi 0, a netto równa się brutto. Stawki nie wyciąga się wtedy z ceny. Schemat nie liczy VAT i nie ma kalkulatora w aplikacji.
+
+Tymczasowa polityka techniczna dla `standard` przy sprzedawcy `registered`, niezatwierdzona księgowo:
+
+1. Cena katalogowa jest brutto.
+2. Kwota ma dwa miejsca po przecinku i w bazie jest liczbą całkowitą groszy.
+3. VAT liczy się metodą „w stu”: brutto × stawka / (100 + stawka).
+4. Wyników pośrednich nie zaokrągla się.
+5. VAT wykazywany w dokumentach księgowych zaokrągla się do pełnego grosza metodą half-up.
+6. Netto jest różnicą brutto i wykazanego VAT.
+7. Liczenie używa arytmetyki całkowitej albo dziesiętnej. Zwykły `Number` JavaScriptu nie służy do kalkulacji finansowych.
+
+`OPEN — ACCOUNTANT CONFIRMATION REQUIRED`:
+
+- czy VAT zaokrąglać osobno dla każdej pozycji, czy po agregacji wartości według stawek;
+- jak postępować z różnicami groszowymi między tymi metodami;
+- czy ta kalkulacja i prezentacja kwot będzie prawidłowa na dokumentach sprzedaży sklepu.
+
+Żadna z tych metod agregacji nie jest zatwierdzona.
 
 Gdy sprzedawca jest `exempt`, zastosowany status każdej pozycji to `exempt`, zastosowana stawka jest null, podatek wynosi 0, a netto równa się brutto. Snapshot katalogowy zostaje taki, jaki był na produkcie.
 
@@ -345,7 +363,7 @@ Nowe zamówienie dostaje dwa wpisy: płatność `pending` i realizacja `new`. `c
 
 ## 7. Płatności
 
-Operator nie jest wybrany. Model przyjmuje gotówkę oraz jednego operatora online: `przelewy24` albo `stripe`. Sekrety operatora są w środowisku, nie w bazie. Danych karty nie zapisujemy.
+Operatorem płatności online w MVP jest Przelewy24. Sklep jest skierowany na rynek polski. Stripe i inni operatorzy nie są teraz implementowani. Schemat nadal dopuszcza `stripe` w checku, więc kolejny operator może dojść później jako adapter, bez przebudowy zamówień. Checkout nie woła API Przelewy24. Integracja operatora ma być wydzielona, bez systemu wielu operatorów na zapas. Ta decyzja nie zmienia schematu. Model nadal przyjmuje gotówkę. Sekrety operatora są w środowisku, nie w bazie. Danych karty nie zapisujemy.
 
 Webhook jest źródłem prawdy dla płatności online. Powrót przeglądarki na stronę sukcesu nie ustawia `paid`. Przed `paid` Express sprawdza podpis, kwotę, walutę, zamówienie i status.
 

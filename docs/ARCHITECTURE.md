@@ -49,7 +49,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publi
 
 Katalog, dane klienta, koszyk, zamówienia i płatności mają być odczytywane przez Express. RLS jest dodatkową warstwą, bo klucz `anon` i tak jest w przeglądarce przy Supabase Auth. Nie zastępuje weryfikacji tokenu ani sprawdzenia właściciela i roli. Połączenie `pg` używa roli z `DATABASE_URL`. Na lokalnej bazie jest to zwykle `postgres`, które omija RLS tak samo jak `service_role`. Dlatego każde przyszłe zapytanie o zasób użytkownika musi mieć warunek właściciela w Express. Osobnej roli bazy o węższych uprawnieniach jeszcze nie ma: wymagałaby migracji i nadania praw do istniejących tabel. Sekretu `service_role` nie wolno umieszczać we frontendzie.
 
-Nie używaj bezpośredniego zapisu z przeglądarki do tabel `orders`, `order_items`, `payments`, `payment_events`, `idempotency_keys`, `user_roles` ani do operacji administracyjnych. Koszyk gościa będzie identyfikowany ciasteczkiem `httpOnly` `shop_guest_session`. Surowy identyfikator nie trafia do bazy, logów ani JSON. W bazie zostanie skrót SHA-256.
+Nie używaj bezpośredniego zapisu z przeglądarki do tabel `orders`, `order_items`, `payments`, `payment_events`, `idempotency_keys`, `user_roles` ani do operacji administracyjnych. Koszyk gościa jest identyfikowany ciasteczkiem `httpOnly` `shop_guest_session`. Surowy identyfikator nie trafia do bazy, logów ani JSON. W bazie jest skrót SHA-256.
 
 `idempotency_keys` i `payment_events` to dwa mechanizmy. Klucz idempotencji dotyczy powtórzonego żądania HTTP wybranych operacji `POST` i nie służy webhookom. Zdarzenie płatności dotyczy webhooka operatora albo ręcznego potwierdzenia gotówki. Webhook nie wysyła nagłówka `Idempotency-Key`.
 
@@ -147,7 +147,7 @@ Ustalone dla schematu i MVP:
 
 Przed implementacją produkcyjną nadal należy zatwierdzić:
 
-- operatora płatności (`przelewy24` albo `stripe`) i jego środowisko testowe;
+- środowisko testowe Przelewy24; operator online MVP jest wybrany, a integracja ma być adapterem, jeszcze niepodłączonym;
 - sposób realizacji usług i produktów cyfrowych;
 - dokumenty sprzedaży, moment obowiązku podatkowego i retencję danych;
 - hosting API, frontendu i Supabase.
