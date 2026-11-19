@@ -16,6 +16,7 @@ import {
   P24TimeoutError,
 } from '../src/p24/errors.js'
 import { hashGuestSessionId } from '../src/session/guest-session.js'
+import { holdIntegrationDatabase } from './integration-lock.js'
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1'])
 
@@ -60,6 +61,9 @@ if (probe) {
 }
 
 const skip = available ? false : 'local database is not available'
+const releaseIntegration = available
+  ? await holdIntegrationDatabase(databaseUrl)
+  : null
 const database = available
   ? createDatabase({
       connectionString: databaseUrl,
@@ -207,95 +211,99 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
   })
 
   after(async () => {
-    if (!database) {
-      return
-    }
+    try {
+      if (!database) {
+        return
+      }
 
-    await database.query(
-      `
+      await database.query(
+        `
         DELETE FROM public.inventory_reservations
         WHERE order_id IN (
           SELECT id FROM public.orders WHERE customer_email LIKE '%@checkout.test'
         )
       `,
-    )
-    await database.query(
-      `
+      )
+      await database.query(
+        `
         DELETE FROM public.payments
         WHERE order_id IN (
           SELECT id FROM public.orders WHERE customer_email LIKE '%@checkout.test'
         )
       `,
-    )
-    if (sessionHashes.length > 0) {
-      await database.query(
-        'DELETE FROM public.idempotency_keys WHERE session_id = ANY($1::char(64)[])',
-        [sessionHashes],
       )
-    }
-    if (userIds.length > 0) {
+      if (sessionHashes.length > 0) {
+        await database.query(
+          'DELETE FROM public.idempotency_keys WHERE session_id = ANY($1::char(64)[])',
+          [sessionHashes],
+        )
+      }
+      if (userIds.length > 0) {
+        await database.query(
+          'DELETE FROM public.idempotency_keys WHERE user_id = ANY($1::uuid[])',
+          [userIds],
+        )
+      }
       await database.query(
-        'DELETE FROM public.idempotency_keys WHERE user_id = ANY($1::uuid[])',
-        [userIds],
+        `DELETE FROM public.orders WHERE customer_email LIKE '%@checkout.test'`,
       )
-    }
-    await database.query(
-      `DELETE FROM public.orders WHERE customer_email LIKE '%@checkout.test'`,
-    )
-    await database.query(
-      `DELETE FROM public.customers WHERE email LIKE '%@checkout.test'`,
-    )
-    if (sessionHashes.length > 0) {
       await database.query(
-        `
+        `DELETE FROM public.customers WHERE email LIKE '%@checkout.test'`,
+      )
+      if (sessionHashes.length > 0) {
+        await database.query(
+          `
           DELETE FROM public.cart_items
           WHERE cart_id IN (
             SELECT id FROM public.carts WHERE session_id = ANY($1::char(64)[])
           )
         `,
-        [sessionHashes],
-      )
-      await database.query(
-        'DELETE FROM public.carts WHERE session_id = ANY($1::char(64)[])',
-        [sessionHashes],
-      )
-    }
-    if (userIds.length > 0) {
-      await database.query(
-        `
+          [sessionHashes],
+        )
+        await database.query(
+          'DELETE FROM public.carts WHERE session_id = ANY($1::char(64)[])',
+          [sessionHashes],
+        )
+      }
+      if (userIds.length > 0) {
+        await database.query(
+          `
           DELETE FROM public.cart_items
           WHERE cart_id IN (
             SELECT id FROM public.carts WHERE user_id = ANY($1::uuid[])
           )
         `,
-        [userIds],
-      )
-      await database.query(
-        'DELETE FROM public.carts WHERE user_id = ANY($1::uuid[])',
-        [userIds],
-      )
-      await database.query(
-        'DELETE FROM public.profiles WHERE id = ANY($1::uuid[])',
-        [userIds],
-      )
-      await database.query(
-        'DELETE FROM auth.users WHERE id = ANY($1::uuid[])',
-        [userIds],
-      )
+          [userIds],
+        )
+        await database.query(
+          'DELETE FROM public.carts WHERE user_id = ANY($1::uuid[])',
+          [userIds],
+        )
+        await database.query(
+          'DELETE FROM public.profiles WHERE id = ANY($1::uuid[])',
+          [userIds],
+        )
+        await database.query(
+          'DELETE FROM auth.users WHERE id = ANY($1::uuid[])',
+          [userIds],
+        )
+      }
+      if (productIds.length > 0) {
+        await database.query(
+          'DELETE FROM public.products WHERE id = ANY($1::uuid[])',
+          [productIds],
+        )
+      }
+      if (originalSeller) {
+        await restoreSeller(originalSeller)
+      }
+      server?.close()
+      onlineServer?.close()
+      productionServer?.close()
+      await database.close()
+    } finally {
+      await releaseIntegration?.()
     }
-    if (productIds.length > 0) {
-      await database.query(
-        'DELETE FROM public.products WHERE id = ANY($1::uuid[])',
-        [productIds],
-      )
-    }
-    if (originalSeller) {
-      await restoreSeller(originalSeller)
-    }
-    server?.close()
-    onlineServer?.close()
-    productionServer?.close()
-    await database.close()
   })
 
   it('creates a cash order for an exempt seller and replays the same key', async () => {

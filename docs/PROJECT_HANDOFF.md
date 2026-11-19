@@ -108,7 +108,7 @@ Nie dodawaj migracji ani nie zmieniaj RLS bez jawnego zakresu i akceptacji użyt
 - Ustalono: `line_gross = unit_gross * quantity`; `line_gross = line_net + line_tax`; kwoty pozostają integerami.
 - `inventory_reservations`: jedna rezerwacja na pozycję. Aktywna wymaga produktu. Aktywna `online` wymaga `expires_at`, aktywna `cash` wymaga pustego `expires_at`. Metoda jest kopią `orders.payment_method` i jest spięta kluczem `(order_id, payment_method)`.
 - PostgreSQL 17.12 nie przyjmuje `ON UPDATE SET NULL` z listą kolumn. Złożony klucz rezerwacji używa `ON UPDATE CASCADE` i `ON DELETE SET NULL (product_id)`. Usunięcie produktu przy rezerwacji terminalnej zeruje `product_id` i zostawia `order_item_id`. Przy statusie `active` ten zapis odrzuca check i całe usunięcie produktu się wycofuje.
-- Worker wygaszania, konsumpcja stanu przy `completed` i 15 minut od commitu checkoutu nie są zaimplementowane. Są ustaloną regułą na później.
+- Worker wygaszania działa jako osobny proces: należne rezerwacje online całego zamówienia oznacza jako `expired` i nie zmienia stanu produktu. Termin 15 minut liczy się od commitu checkoutu. Konsumpcja stanu przy `completed` nie jest zaimplementowana.
 
 ## 6. Zakończone prace
 
