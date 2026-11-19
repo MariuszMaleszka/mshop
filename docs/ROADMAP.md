@@ -129,7 +129,7 @@ Acceptance:
 - przy statusie sprzedawcy `unknown` zamówienie nie powstaje.
 
 ## Phase 7 — Payments
-Checkout gotówkowy zapisuje zamówienie bez operatora online. Checkout online rejestruje transakcję sandboxową po commicie zamówienia. Produkcyjny checkout online pozostaje wyłączony. Webhook i `transaction/verify` są podłączone. Nierozstrzygnięte zostają host przekierowania sandboxu, lista definitywnych odmów weryfikacji oraz automatyczne odzyskanie `unknown` i `verification_requested`.
+Checkout gotówkowy zapisuje zamówienie bez operatora online. Checkout online rejestruje transakcję sandboxową po commicie zamówienia. Produkcyjny checkout online pozostaje wyłączony. Webhook i `transaction/verify` są podłączone. Zapisany token sandboxu wraca jako stały adres panelu. Końcowe potwierdzenie tego hosta podczas testu sandbox pozostaje otwarte, podobnie jak lista definitywnych odmów weryfikacji oraz automatyczne odzyskanie `unknown` i `verification_requested`.
 
 - [x] Integracja operatora w trybie sandbox, bez produkcyjnego uruchomienia.
 - [x] Utworzenie transakcji po commicie zamówienia.

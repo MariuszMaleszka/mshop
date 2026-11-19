@@ -708,18 +708,37 @@ describe('Przelewy24 HTTP client', () => {
 })
 
 describe('Przelewy24 redirect URL', () => {
-  it('builds only the documented production panel address', () => {
+  it('builds a fixed panel address for sandbox and production', () => {
+    assert.equal(
+      transactionPanelUrl('sandbox', 'token_1'),
+      'https://sandbox.przelewy24.pl/trnRequest/token_1',
+    )
     assert.equal(
       transactionPanelUrl('production', 'token_1'),
       'https://secure.przelewy24.pl/trnRequest/token_1',
     )
-    assert.equal(transactionPanelUrl('sandbox', 'token_1'), null)
-    assert.equal(transactionPanelUrl('production', 'a b'), null)
-    assert.equal(
-      transactionPanelUrl('production', 'token_1').includes(
-        'sandbox.przelewy24.pl',
-      ),
-      false,
-    )
+  })
+
+  it('rejects an empty or invalid token before building a URL', () => {
+    for (const token of [
+      '',
+      ' ',
+      'a b',
+      '../token',
+      'token/extra',
+      'token?next=https://evil.example',
+      'https://evil.example/trnRequest/token_1',
+      '%2F%2Fevil.example',
+      '..',
+      '.',
+      `token_${'a'.repeat(2048)}`,
+    ]) {
+      assert.equal(transactionPanelUrl('sandbox', token), null, token)
+      assert.equal(transactionPanelUrl('production', token), null, token)
+    }
+
+    assert.equal(transactionPanelUrl('sandbox', null), null)
+    assert.equal(transactionPanelUrl('production', 1), null)
+    assert.equal(transactionPanelUrl('other', 'token_1'), null)
   })
 })

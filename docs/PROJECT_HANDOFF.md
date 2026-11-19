@@ -191,7 +191,7 @@ Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` nie 
 ### Późniejsze, osobne etapy
 
 1. Integracja frontendu i obsługa CORS/cookie credentials – po ustaleniu domen i sposobu wdrożenia. Frontend nie wywołuje jeszcze `POST /api/v1/cart/merge`.
-2. Dokończenie płatności online poza sandboxem. API checkoutu, workera i webhooka jest na `main`. Checkout online działa tylko w sandboxie, a host przekierowania sandboxu nie jest ustalony. Stany `unknown` oraz `verification_requested` bez `verification_accepted` nie odzyskują się same; procedura jest w `docs/P24_RECONCILIATION.md`. Checkout nadal blokuje `seller_tax_status = unknown`. Przed dokumentami sprzedaży zostaje otwarte potwierdzenie księgowe agregacji VAT.
+2. Dokończenie płatności online poza sandboxem. API checkoutu, workera i webhooka jest na `main`. Checkout online działa tylko w sandboxie. Zapisany token wraca jako stały `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}`; host wymaga końcowego potwierdzenia podczas testu sandbox, bo specyfikacja REST 1.0.18 podaje bezpośrednio tylko adres produkcyjny. Stany `unknown` oraz `verification_requested` bez `verification_accepted` nie odzyskują się same; procedura jest w `docs/P24_RECONCILIATION.md`. Checkout nadal blokuje `seller_tax_status = unknown`. Przed dokumentami sprzedaży zostaje otwarte potwierdzenie księgowe agregacji VAT.
 
 ## 9. Otwarte decyzje na przyszłość
 

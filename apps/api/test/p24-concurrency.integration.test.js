@@ -714,7 +714,19 @@ describe('P24 payment lock concurrency', { concurrency: 1, skip }, () => {
         registerCalls[0].url,
         'https://sandbox.przelewy24.pl/api/v1/transaction/register',
       )
-      assertNoSecrets(checkoutPayload)
+      assert.equal(
+        checkoutPayload.data.payment.redirectUrl,
+        `https://sandbox.przelewy24.pl/trnRequest/${TOKEN}`,
+      )
+      assert.equal(JSON.stringify(checkoutPayload).includes(CRC), false)
+      assert.equal(
+        JSON.stringify(checkoutPayload).includes('sandbox-crc-key'),
+        false,
+      )
+      assert.equal(
+        JSON.stringify(checkoutPayload).includes('sandbox-api-secret'),
+        false,
+      )
 
       const accepted = await postWebhook(held.id, blocked.orderId)
       const paid = await paymentByEmail(session.email)

@@ -39,7 +39,7 @@ Rejestrację uznaj za przyjętą tylko wtedy, gdy odczyt po `sessionId` zwraca t
 
 Udokumentowany odczyt transakcji po `sessionId` nie zwraca tokenu przekierowania. Specyfikacja nie opisuje innego odczytu tego tokenu. Gdy token nie został zapisany lokalnie, nie ma udokumentowanego sposobu jego odtworzenia.
 
-Nie wywołuj `transaction/register`. Nie ustawiaj `registered` ani `redirect_token` ręcznie. Zostaw `unknown`. Poinformuj, że automatyczne przekierowanie nie powstanie. Rezerwacja nadal wygasa po 15 minutach od utworzenia zamówienia. Nowy zakup wymaga nowego zamówienia, bo koszyk tego zamówienia jest już przekonwertowany. Takiej nowej próby ta procedura nie uruchamia.
+Nie wywołuj `transaction/register`. Nie ustawiaj `registered` ani `redirect_token` ręcznie. Zostaw `unknown`. Poinformuj, że automatyczne przekierowanie nie powstanie. Brakującego tokenu nie składa się w adres. Zapisany token sandboxu używa wyłącznie stałego hosta `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}`. Ten host wymaga końcowego potwierdzenia podczas testu sandbox, bo specyfikacja REST 1.0.18 podaje bezpośrednio tylko adres produkcyjny. Rezerwacja nadal wygasa po 15 minutach od utworzenia zamówienia. Nowy zakup wymaga nowego zamówienia, bo koszyk tego zamówienia jest już przekonwertowany. Takiej nowej próby ta procedura nie uruchamia.
 
 Status `2` z podglądu nie zmienia lokalnej płatności na `paid` i nie zastępuje `transaction/verify`.
 

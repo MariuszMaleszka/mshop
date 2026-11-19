@@ -724,7 +724,10 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
     assert.equal(result.payload.data.paymentMethod, 'online')
     assert.equal(result.payload.data.paymentStatus, 'pending')
     assert.equal(result.payload.data.payment.initializationStatus, 'registered')
-    assert.equal(result.payload.data.payment.redirectUrl, undefined)
+    assert.equal(
+      result.payload.data.payment.redirectUrl,
+      'https://sandbox.przelewy24.pl/trnRequest/tok_sandbox',
+    )
     assert.equal(row.initialization_status, 'registered')
     assert.equal(row.redirect_token, 'tok_sandbox')
     assert.equal(row.provider_transaction_id, null)
@@ -743,7 +746,11 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
     assert.equal(calls[0].body.includes(row.payment_id), true)
     assert.equal(calls[0].body.includes('sandbox-crc-key'), false)
     assert.equal(calls[0].body.includes('sandbox-api-secret'), false)
-    assert.equal(text.includes('tok_sandbox'), false)
+    assert.equal(
+      text.includes('https://sandbox.przelewy24.pl/trnRequest/tok_sandbox'),
+      true,
+    )
+    assert.equal(text.includes('secure.przelewy24.pl'), false)
     assert.equal(text.includes('sandbox-crc-key'), false)
   })
 

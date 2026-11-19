@@ -29,7 +29,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publi
 - błędy HTTP przechodzą przez jedno middleware; logi nie zawierają nagłówków, body, query stringu ani sekretów;
 - dostęp do PostgreSQL idzie przez jedną pulę `pg` i serwerowy `DATABASE_URL`, bez Supabase SDK i bez ORM;
 - klucz `service_role` zostaje sekretem serwerowym i nie jest potrzebny, dopóki nie ma Storage albo administracyjnego API Auth;
-- adapter HTTP Przelewy24 w `apps/api/src/p24` rejestruje transakcję sandboxową dopiero po commicie zamówienia; `payments.id` jest `sessionId`; webhook `POST /webhooks/payments/przelewy24` jest podłączony i potwierdza płatność wyłącznie przez `transaction/verify` z dokładnym `data.status` równym `success`; inne statusy zostają nierozstrzygnięte i nie zapisują `verification_declined`; `verification_requested` commituje się przed HTTP, a `verification_accepted` razem ze statusem `paid` w jednej transakcji; drugiego `verifyTransaction` nie ma; powrót przeglądarki nie ustawia `paid`; worker `pnpm --filter @shop/api expiry:worker` wygasza rezerwacje online po 15 minutach od utworzenia zamówienia i nie przywraca ich przy spóźnionej płatności; produkcyjny checkout online pozostaje wyłączony; host przekierowania sandboxu nie jest ustalony, więc token nie wraca jako URL; dostawca e-mail nadal niepodłączony.
+- adapter HTTP Przelewy24 w `apps/api/src/p24` rejestruje transakcję sandboxową dopiero po commicie zamówienia; `payments.id` jest `sessionId`; webhook `POST /webhooks/payments/przelewy24` jest podłączony i potwierdza płatność wyłącznie przez `transaction/verify` z dokładnym `data.status` równym `success`; inne statusy zostają nierozstrzygnięte i nie zapisują `verification_declined`; `verification_requested` commituje się przed HTTP, a `verification_accepted` razem ze statusem `paid` w jednej transakcji; drugiego `verifyTransaction` nie ma; powrót przeglądarki nie ustawia `paid`; worker `pnpm --filter @shop/api expiry:worker` wygasza rezerwacje online po 15 minutach od utworzenia zamówienia i nie przywraca ich przy spóźnionej płatności; produkcyjny checkout online pozostaje wyłączony; zapisany token sandboxu wraca jako stały `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}`, a host ten wymaga końcowego potwierdzenia podczas testu sandbox; dostawca e-mail nadal niepodłączony.
 
 ### Supabase
 - PostgreSQL jako główna baza danych;
@@ -147,7 +147,7 @@ Ustalone dla schematu i MVP:
 
 Przed implementacją produkcyjną nadal należy zatwierdzić:
 
-- host przekierowania Przelewy24 w sandboxie; produkcyjny checkout online pozostaje wyłączony mimo podłączonego webhooka; ręczna rekonsyliacja stanów `unknown` oraz `verification_requested` bez `verification_accepted` jest w `docs/P24_RECONCILIATION.md`;
+- końcowe potwierdzenie hosta `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}` podczas testu sandbox; specyfikacja REST 1.0.18 podaje bezpośrednio tylko adres produkcyjny; produkcyjny checkout online pozostaje wyłączony mimo podłączonego webhooka; ręczna rekonsyliacja stanów `unknown` oraz `verification_requested` bez `verification_accepted` jest w `docs/P24_RECONCILIATION.md`;
 - sposób realizacji usług i produktów cyfrowych;
 - dokumenty sprzedaży, moment obowiązku podatkowego i retencję danych;
 - hosting API, frontendu i Supabase.
