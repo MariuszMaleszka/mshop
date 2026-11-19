@@ -365,7 +365,7 @@ Nowe zamówienie dostaje dwa wpisy: płatność `pending` i realizacja `new`. `c
 
 ## 7. Płatności
 
-Operatorem płatności online w MVP jest Przelewy24. Sklep jest skierowany na rynek polski. Stripe i inni operatorzy nie są teraz implementowani. Schemat nadal dopuszcza `stripe` w checku, więc kolejny operator może dojść później jako adapter, bez przebudowy zamówień. Checkout nie woła API Przelewy24. Integracja operatora ma być wydzielona, bez systemu wielu operatorów na zapas. Ta decyzja nie zmienia schematu. Model nadal przyjmuje gotówkę. Sekrety operatora są w środowisku, nie w bazie. Danych karty nie zapisujemy.
+Operatorem płatności online w MVP jest Przelewy24. Sklep jest skierowany na rynek polski. Stripe i inni operatorzy nie są teraz implementowani. Schemat nadal dopuszcza `stripe` w checku, więc kolejny operator może dojść później jako adapter, bez przebudowy zamówień. Sandboxowy checkout może zapisać płatność `not_started`, a po commicie ustawić `unknown` albo `registered` z tokenem w `redirect_token`. `provider_transaction_id` pozostaje puste do webhooka. Produkcyjny checkout online jest wyłączony. Worker wygaszania rezerwacji i webhook nie są podłączone. Integracja operatora jest wydzielona, bez systemu wielu operatorów na zapas. Ta decyzja nie zmienia schematu. Model nadal przyjmuje gotówkę. Sekrety operatora są w środowisku, nie w bazie. Danych karty nie zapisujemy.
 
 Webhook jest źródłem prawdy dla płatności online. Powrót przeglądarki na stronę sukcesu nie ustawia `paid`. Przed `paid` Express sprawdza podpis, kwotę, walutę, zamówienie i status.
 

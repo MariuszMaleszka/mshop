@@ -239,21 +239,91 @@ export class CheckoutRejection extends Error {
   }
 }
 
-export async function placeCashOrder(tx, { owner, idempotencyKey, body }) {
+const INSERT_ONLINE_ORDER_SQL = `
+  INSERT INTO public.orders (
+    order_number,
+    customer_id,
+    user_id,
+    customer_email,
+    customer_type,
+    billing_snapshot,
+    seller_tax_status_snapshot,
+    seller_business_name_snapshot,
+    seller_nip_snapshot,
+    seller_street_snapshot,
+    seller_building_number_snapshot,
+    seller_unit_number_snapshot,
+    seller_postal_code_snapshot,
+    seller_city_snapshot,
+    seller_country_code_snapshot,
+    currency,
+    net_amount,
+    tax_amount,
+    gross_amount,
+    payment_method,
+    payment_status,
+    fulfillment_status
+  )
+  VALUES (
+    $1, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13,
+    $14, $15, $16, $17::bigint, $18::bigint, $19::bigint, 'online', 'pending', 'new'
+  )
+  RETURNING id, order_number, payment_status, fulfillment_status, payment_method,
+    btrim(currency) AS currency, net_amount::text AS net_amount,
+    tax_amount::text AS tax_amount, gross_amount::text AS gross_amount
+`
+
+const INSERT_ONLINE_PAYMENT_SQL = `
+  INSERT INTO public.payments (
+    order_id,
+    method,
+    provider,
+    provider_transaction_id,
+    status,
+    amount,
+    currency,
+    initialization_status,
+    redirect_token
+  )
+  VALUES (
+    $1::uuid, 'online', 'przelewy24', NULL, 'pending', $2::bigint, $3,
+    'not_started', NULL
+  )
+  RETURNING id
+`
+
+const INSERT_ONLINE_RESERVATION_SQL = `
+  INSERT INTO public.inventory_reservations (
+    order_id, order_item_id, product_id, payment_method, quantity, status, expires_at
+  )
+  VALUES (
+    $1::uuid, $2::uuid, $3::uuid, 'online', $4::integer, 'active',
+    clock_timestamp() + interval '15 minutes'
+  )
+`
+
+export async function placeCheckoutOrder(
+  tx,
+  { owner, idempotencyKey, body, onlineReady = false },
+) {
   await lockOwner(tx, owner)
   const requestHash = checkoutRequestHash(body)
   const replay = await readIdempotency(tx, owner, idempotencyKey, requestHash)
 
   if (replay) {
+    if (replay.body?.data?.paymentMethod === 'online') {
+      return { online: { orderId: replay.body.data.id } }
+    }
+
     return replay
   }
 
   if (body.paymentMethod === 'online') {
-    reject(
-      501,
-      'ONLINE_PAYMENT_NOT_IMPLEMENTED',
-      'Online payment is not implemented',
-    )
+    if (!onlineReady) {
+      reject(503, 'SERVICE_UNAVAILABLE', 'Service unavailable')
+    }
+
+    return createOnlineOrder(tx, { owner, idempotencyKey, body, requestHash })
   }
 
   const cart = await lockCart(tx, owner)
@@ -326,6 +396,119 @@ export async function placeCashOrder(tx, { owner, idempotencyKey, body }) {
   })
 
   return { status: 201, body: response }
+}
+
+async function createOnlineOrder(
+  tx,
+  { owner, idempotencyKey, body, requestHash },
+) {
+  const cart = await lockCart(tx, owner)
+
+  if (!cart) {
+    reject(404, 'NOT_FOUND', 'Resource not found')
+  }
+
+  if (cart.status === 'converted') {
+    reject(409, 'CART_CONVERTED', 'Cart is already converted')
+  }
+
+  if (cart.currency !== 'PLN') {
+    reject(400, 'VALIDATION_ERROR', 'Invalid request data')
+  }
+
+  const seller = await readSeller(tx)
+  const items = await readItems(tx, cart.id)
+  const products = await lockProducts(tx, items)
+  const prepared = await prepareLines(
+    tx,
+    items,
+    products,
+    seller.seller_tax_status,
+  )
+  let amounts
+
+  try {
+    amounts = calculateOrderAmounts({
+      sellerTaxStatus: seller.seller_tax_status,
+      strategy: ZERO_TAX_STRATEGY,
+      lines: prepared.lines,
+    })
+  } catch (error) {
+    if (error instanceof OrderAmountError) {
+      reject(
+        409,
+        'PRODUCT_UNAVAILABLE',
+        'Cart has products that cannot be purchased',
+      )
+    }
+
+    throw error
+  }
+
+  if (!amounts.lineAmountsComplete) {
+    reject(409, 'VAT_POLICY_NOT_CONFIRMED', 'VAT policy is not confirmed')
+  }
+
+  const customerId = await customerForOrder(tx, owner, body)
+  const order = await tx.query(INSERT_ONLINE_ORDER_SQL, [
+    `C${cryptoRandom()}`,
+    customerId,
+    owner.kind === 'account' ? owner.key : null,
+    body.email,
+    body.customerType,
+    JSON.stringify(billingSnapshot(body.billing)),
+    seller.seller_tax_status,
+    seller.business_name,
+    seller.nip,
+    seller.street,
+    seller.building_number,
+    seller.unit_number,
+    seller.postal_code,
+    seller.city,
+    seller.country_code,
+    'PLN',
+    amounts.totals.net,
+    amounts.totals.tax,
+    amounts.totals.gross,
+  ])
+  const created = order.rows[0]
+  const orderItems = await insertItems(
+    tx,
+    created.id,
+    prepared.products,
+    amounts,
+  )
+  await insertHistory(tx, created.id, owner)
+  await tx.query(INSERT_ONLINE_PAYMENT_SQL, [
+    created.id,
+    created.gross_amount,
+    'PLN',
+  ])
+  for (const item of orderItems) {
+    await tx.query(INSERT_ONLINE_RESERVATION_SQL, [
+      created.id,
+      item.id,
+      item.product.id,
+      item.quantity,
+    ])
+  }
+  await convertCart(tx, cart.id)
+  const response = {
+    data: {
+      ...orderResponse(created).data,
+      payment: { initializationStatus: 'not_started' },
+    },
+    meta: {},
+  }
+  await insertIdempotency(tx, {
+    owner,
+    idempotencyKey,
+    requestHash,
+    orderId: created.id,
+    response,
+  })
+
+  return { online: { orderId: created.id } }
 }
 
 async function lockOwner(tx, owner) {

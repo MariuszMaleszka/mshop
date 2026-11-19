@@ -29,7 +29,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publi
 - błędy HTTP przechodzą przez jedno middleware; logi nie zawierają nagłówków, body, query stringu ani sekretów;
 - dostęp do PostgreSQL idzie przez jedną pulę `pg` i serwerowy `DATABASE_URL`, bez Supabase SDK i bez ORM;
 - klucz `service_role` zostaje sekretem serwerowym i nie jest potrzebny, dopóki nie ma Storage albo administracyjnego API Auth;
-- adapter HTTP Przelewy24 w `apps/api/src/p24` (konfiguracja, podpisy SHA-384 i klient REST); nie jest podłączony do checkoutu, webhooków ani zamówień; dostawca e-mail nadal niepodłączony.
+- adapter HTTP Przelewy24 w `apps/api/src/p24` jest używany przez sandboxowy checkout po commicie zamówienia; webhook, weryfikacja transakcji i worker rezerwacji nie są podłączone; produkcyjny checkout online jest wyłączony; dostawca e-mail nadal niepodłączony.
 
 ### Supabase
 - PostgreSQL jako główna baza danych;
@@ -147,7 +147,7 @@ Ustalone dla schematu i MVP:
 
 Przed implementacją produkcyjną nadal należy zatwierdzić:
 
-- środowisko testowe Przelewy24; operator online MVP jest wybrany, a integracja ma być adapterem, jeszcze niepodłączonym;
+- host przekierowania Przelewy24 w sandboxie; produkcyjny checkout online pozostaje wyłączony do czasu workera rezerwacji i webhooka;
 - sposób realizacji usług i produktów cyfrowych;
 - dokumenty sprzedaży, moment obowiązku podatkowego i retencję danych;
 - hosting API, frontendu i Supabase.

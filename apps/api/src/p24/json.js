@@ -43,86 +43,321 @@ export function decimalInteger(value, field) {
   return digits
 }
 
+const CANONICAL_INTEGER = /^-?(0|[1-9][0-9]*)$/
+
+class JsonInteger {
+  constructor(digits) {
+    this.digits = digits
+  }
+}
+
+class JsonNumber {
+  constructor(text) {
+    this.text = text
+  }
+}
+
+export function jsonIntegerDigits(value) {
+  return value instanceof JsonInteger ? value.digits : null
+}
+
+export function jsonNumberText(value) {
+  if (value instanceof JsonInteger) {
+    return value.digits
+  }
+
+  return value instanceof JsonNumber ? value.text : null
+}
+
 export function parseJsonWithIntegerStrings(text) {
   if (typeof text !== 'string' || text.length > MAX_RESPONSE_CHARS) {
     throw new P24ResponseError('Przelewy24 response is not JSON')
   }
 
-  try {
-    return JSON.parse(rewriteIntegersAsStrings(text))
-  } catch (error) {
-    if (error instanceof P24ResponseError) {
-      throw error
+  const parser = new JsonParser(text)
+  const value = parser.parseValue()
+  parser.skipWhitespace()
+
+  if (!parser.done()) {
+    throw new P24ResponseError('Przelewy24 response is not JSON')
+  }
+
+  return value
+}
+
+class JsonParser {
+  constructor(text) {
+    this.text = text
+    this.index = 0
+  }
+
+  parseValue() {
+    this.skipWhitespace()
+    const char = this.peek()
+
+    if (char === '{') {
+      return this.parseObject()
+    }
+
+    if (char === '[') {
+      return this.parseArray()
+    }
+
+    if (char === '"') {
+      return this.parseString()
+    }
+
+    if (char === 't') {
+      return this.parseLiteral('true', true)
+    }
+
+    if (char === 'f') {
+      return this.parseLiteral('false', false)
+    }
+
+    if (char === 'n') {
+      return this.parseLiteral('null', null)
+    }
+
+    if (char === '-' || isDigit(char)) {
+      return this.parseNumber()
     }
 
     throw new P24ResponseError('Przelewy24 response is not JSON')
   }
-}
 
-function rewriteIntegersAsStrings(text) {
-  let result = ''
-  let index = 0
+  parseObject() {
+    this.expect('{')
+    const object = {}
+    const keys = new Set()
+    this.skipWhitespace()
 
-  while (index < text.length) {
-    const char = text[index]
-
-    if (char === '"') {
-      const end = readJsonString(text, index)
-      result += text.slice(index, end)
-      index = end
-      continue
+    if (this.peek() === '}') {
+      this.index += 1
+      return object
     }
 
-    if (char === '-' || isDigit(char)) {
-      const end = readJsonNumber(text, index)
-      const raw = text.slice(index, end)
-
-      if (/^-?(0|[1-9][0-9]*)$/.test(raw)) {
-        result += JSON.stringify(raw)
-      } else {
-        result += raw
+    while (this.index < this.text.length) {
+      this.skipWhitespace()
+      if (this.peek() !== '"') {
+        throw new P24ResponseError('Przelewy24 response is not JSON')
       }
 
-      index = end
-      continue
+      const key = this.parseString()
+
+      if (keys.has(key)) {
+        throw new P24ResponseError('Przelewy24 response repeats a JSON key')
+      }
+
+      keys.add(key)
+      this.skipWhitespace()
+      this.expect(':')
+      object[key] = this.parseValue()
+      this.skipWhitespace()
+
+      if (this.peek() === ',') {
+        this.index += 1
+        continue
+      }
+
+      this.expect('}')
+      return object
     }
 
-    result += char
-    index += 1
+    throw new P24ResponseError('Przelewy24 response is not JSON')
   }
 
-  return result
-}
+  parseArray() {
+    this.expect('[')
+    const values = []
+    this.skipWhitespace()
 
-function readJsonString(text, start) {
-  let index = start + 1
-
-  while (index < text.length) {
-    const char = text[index]
-
-    if (char === '\\') {
-      index += 2
-      continue
+    if (this.peek() === ']') {
+      this.index += 1
+      return values
     }
 
-    if (char === '"') {
-      return index + 1
+    while (this.index < this.text.length) {
+      values.push(this.parseValue())
+      this.skipWhitespace()
+
+      if (this.peek() === ',') {
+        this.index += 1
+        continue
+      }
+
+      this.expect(']')
+      return values
     }
 
-    index += 1
+    throw new P24ResponseError('Przelewy24 response is not JSON')
   }
 
-  throw new P24ResponseError('Przelewy24 response is not JSON')
-}
+  parseString() {
+    this.expect('"')
+    let value = ''
 
-function readJsonNumber(text, start) {
-  let index = start + 1
+    while (this.index < this.text.length) {
+      const char = this.text[this.index]
+      this.index += 1
 
-  while (index < text.length && /[0-9.eE+-]/.test(text[index])) {
-    index += 1
+      if (char === '"') {
+        return value
+      }
+
+      if (char === '\\') {
+        value += this.parseEscape()
+        continue
+      }
+
+      if (char.charCodeAt(0) < 0x20) {
+        throw new P24ResponseError('Przelewy24 response is not JSON')
+      }
+
+      value += char
+    }
+
+    throw new P24ResponseError('Przelewy24 response is not JSON')
   }
 
-  return index
+  parseEscape() {
+    const char = this.text[this.index]
+    this.index += 1
+    const simple = {
+      '"': '"',
+      '\\': '\\',
+      '/': '/',
+      b: '\b',
+      f: '\f',
+      n: '\n',
+      r: '\r',
+      t: '\t',
+    }
+
+    if (Object.hasOwn(simple, char)) {
+      return simple[char]
+    }
+
+    if (char !== 'u') {
+      throw new P24ResponseError('Przelewy24 response is not JSON')
+    }
+
+    const hex = this.text.slice(this.index, this.index + 4)
+
+    if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+      throw new P24ResponseError('Przelewy24 response is not JSON')
+    }
+
+    this.index += 4
+    return String.fromCharCode(Number.parseInt(hex, 16))
+  }
+
+  parseNumber() {
+    const start = this.index
+
+    if (this.peek() === '-') {
+      this.index += 1
+    }
+
+    if (!this.consumeInt()) {
+      throw new P24ResponseError('Przelewy24 response has an invalid number')
+    }
+
+    let canonicalInteger = true
+
+    if (this.peek() === '.') {
+      canonicalInteger = false
+      this.index += 1
+
+      if (!this.consumeDigits()) {
+        throw new P24ResponseError('Przelewy24 response has an invalid number')
+      }
+    }
+
+    if (this.peek() === 'e' || this.peek() === 'E') {
+      canonicalInteger = false
+      this.index += 1
+
+      if (this.peek() === '+' || this.peek() === '-') {
+        this.index += 1
+      }
+
+      if (!this.consumeDigits()) {
+        throw new P24ResponseError('Przelewy24 response has an invalid number')
+      }
+    }
+
+    const text = this.text.slice(start, this.index)
+
+    if (canonicalInteger) {
+      if (!CANONICAL_INTEGER.test(text)) {
+        throw new P24ResponseError('Przelewy24 response has an invalid number')
+      }
+
+      return new JsonInteger(text)
+    }
+
+    return new JsonNumber(text)
+  }
+
+  consumeInt() {
+    if (this.peek() === '0') {
+      this.index += 1
+      return !isDigit(this.peek())
+    }
+
+    return this.consumeDigits()
+  }
+
+  consumeDigits() {
+    if (!isDigit(this.peek())) {
+      return false
+    }
+
+    while (isDigit(this.peek())) {
+      this.index += 1
+    }
+
+    return true
+  }
+
+  parseLiteral(expected, value) {
+    if (
+      this.text.slice(this.index, this.index + expected.length) !== expected
+    ) {
+      throw new P24ResponseError('Przelewy24 response is not JSON')
+    }
+
+    this.index += expected.length
+    return value
+  }
+
+  skipWhitespace() {
+    while (
+      this.peek() === ' ' ||
+      this.peek() === '\n' ||
+      this.peek() === '\r' ||
+      this.peek() === '\t'
+    ) {
+      this.index += 1
+    }
+  }
+
+  expect(char) {
+    if (this.peek() !== char) {
+      throw new P24ResponseError('Przelewy24 response is not JSON')
+    }
+
+    this.index += 1
+  }
+
+  peek() {
+    return this.text[this.index]
+  }
+
+  done() {
+    return this.index >= this.text.length
+  }
 }
 
 function isDigit(char) {

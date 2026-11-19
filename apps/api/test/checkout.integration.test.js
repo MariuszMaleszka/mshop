@@ -2,11 +2,19 @@ import assert from 'node:assert/strict'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { after, before, describe, it } from 'node:test'
 import pg from 'pg'
+import { writeRegistrationToken } from '../src/checkout/online-payment.js'
+import { placeCheckoutOrder } from '../src/checkout/repository.js'
 import { registerCheckoutRoutes } from '../src/checkout/routes.js'
 import { createApp } from '../src/app.js'
 import { createDatabase } from '../src/db/pool.js'
 import { loadConfig } from '../src/config.js'
 import { HttpError } from '../src/http/errors.js'
+import { createP24Client } from '../src/p24/client.js'
+import {
+  P24HttpError,
+  P24NetworkError,
+  P24TimeoutError,
+} from '../src/p24/errors.js'
 import { hashGuestSessionId } from '../src/session/guest-session.js'
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1'])
@@ -71,32 +79,93 @@ const userIds = []
 let originalSeller = null
 let server
 let baseUrl
+let onlineServer
+let onlineBaseUrl
+let productionServer
+let productionBaseUrl
 let placeTransaction
+let clientFactory = () => {
+  throw new Error('P24 client was not prepared')
+}
+const productionCalls = []
+const sandboxP24 = {
+  environment: 'sandbox',
+  merchantId: '10001',
+  posId: '10002',
+  crcKey: 'sandbox-crc-key',
+  secretId: 'sandbox-api-secret',
+  apiBaseUrl: 'https://sandbox.przelewy24.pl/api/v1',
+  requestTimeoutMs: 10000,
+  urlReturn: 'https://shop.example/return',
+  urlStatus: 'https://shop.example/status',
+}
+const productionP24 = {
+  ...sandboxP24,
+  environment: 'production',
+  apiBaseUrl: 'https://secure.przelewy24.pl/api/v1',
+  urlReturn: 'https://shop.example/return',
+  urlStatus: 'https://shop.example/status',
+}
 
 const app = database
   ? createApp(config, {
       database,
-      accessTokens: {
-        async verifyAccessToken(token) {
-          const userId = tokens.get(token)
-
-          if (!userId) {
-            throw new HttpError({
-              status: 401,
-              code: 'UNAUTHORIZED',
-              message: 'Authentication required',
-              logMessage: 'auth.invalid_token',
-            })
-          }
-
-          return userId
-        },
-      },
+      accessTokens: appAccessTokens(),
       registerRoutes(router) {
         registerCheckoutRoutes(router, { database })
       },
     })
   : null
+const onlineApp = database
+  ? createApp(config, {
+      database,
+      accessTokens: appAccessTokens(),
+      registerRoutes(router) {
+        registerCheckoutRoutes(router, {
+          database,
+          p24: sandboxP24,
+          createP24Client(received) {
+            return clientFactory(received)
+          },
+        })
+      },
+    })
+  : null
+const productionApp = database
+  ? createApp(config, {
+      database,
+      accessTokens: appAccessTokens(),
+      registerRoutes(router) {
+        registerCheckoutRoutes(router, {
+          database,
+          p24: productionP24,
+          createP24Client() {
+            productionCalls.push('create')
+            throw new Error('production checkout must not create a P24 client')
+          },
+        })
+      },
+    })
+  : null
+
+function appAccessTokens() {
+  return {
+    async verifyAccessToken(token) {
+      const userId = tokens.get(token)
+
+      if (!userId) {
+        throw new HttpError({
+          status: 401,
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          logMessage: 'auth.invalid_token',
+        })
+      }
+
+      return userId
+    },
+  }
+}
 
 function listen(target) {
   return new Promise((resolve) => {
@@ -129,6 +198,12 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
     const listened = await listen(app)
     server = listened.server
     baseUrl = listened.baseUrl
+    const online = await listen(onlineApp)
+    onlineServer = online.server
+    onlineBaseUrl = online.baseUrl
+    const production = await listen(productionApp)
+    productionServer = production.server
+    productionBaseUrl = production.baseUrl
   })
 
   after(async () => {
@@ -218,6 +293,8 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
       await restoreSeller(originalSeller)
     }
     server?.close()
+    onlineServer?.close()
+    productionServer?.close()
     await database.close()
   })
 
@@ -470,13 +547,15 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
     const unknown = await checkout(session)
     await setSeller('exempt')
     const online = await checkout(session, {
-      body: checkoutBody(session.email, { paymentMethod: 'online' }),
+      body: checkoutBody(`a${session.hash.slice(0, 8)}@checkout.test`, {
+        paymentMethod: 'online',
+      }),
     })
 
     assert.equal(unknown.status, 409)
     assert.equal(unknown.payload.error.code, 'SELLER_TAX_STATUS_UNKNOWN')
-    assert.equal(online.status, 501)
-    assert.equal(online.payload.error.code, 'ONLINE_PAYMENT_NOT_IMPLEMENTED')
+    assert.equal(online.status, 503)
+    assert.equal(online.payload.error.code, 'SERVICE_UNAVAILABLE')
     assert.deepEqual(await counts(), before)
     assert.equal(await cartStatus(session.hash), 'active')
   })
@@ -609,6 +688,526 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
         assert.equal(allowedError.has(result.payload.error.code), true)
       }
     }
+  })
+
+  it('creates an online order atomically and stores the redirect token', async () => {
+    const calls = []
+    useFetch(async (url, options) => {
+      calls.push({
+        url: String(url),
+        method: options.method,
+        body: options.body,
+      })
+      assert.equal(
+        String(url).startsWith('https://sandbox.przelewy24.pl/'),
+        true,
+      )
+      return jsonResult(
+        200,
+        '{"responseCode":0,"data":{"token":"tok_sandbox"}}',
+      )
+    })
+    const session = await onlineCart()
+    const result = await onlineCheckout(session)
+    const row = await onlineRow(result.payload.data.id)
+    const text = JSON.stringify(result.payload)
+
+    assert.equal(result.status, 201)
+    assert.equal(result.payload.data.paymentMethod, 'online')
+    assert.equal(result.payload.data.paymentStatus, 'pending')
+    assert.equal(result.payload.data.payment.initializationStatus, 'registered')
+    assert.equal(result.payload.data.payment.redirectUrl, undefined)
+    assert.equal(row.initialization_status, 'registered')
+    assert.equal(row.redirect_token, 'tok_sandbox')
+    assert.equal(row.provider_transaction_id, null)
+    assert.equal(row.reservation_method, 'online')
+    assert.equal(row.reservation_status, 'active')
+    assert.equal(row.reservation_window, true)
+    assert.equal(row.stock_quantity, 3)
+    assert.equal(row.cart_status, 'converted')
+    assert.equal(row.response_status, 201)
+    assert.equal(
+      row.response_body.data.payment.initializationStatus,
+      'not_started',
+    )
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].method, 'POST')
+    assert.equal(calls[0].body.includes(row.payment_id), true)
+    assert.equal(calls[0].body.includes('sandbox-crc-key'), false)
+    assert.equal(calls[0].body.includes('sandbox-api-secret'), false)
+    assert.equal(text.includes('tok_sandbox'), false)
+    assert.equal(text.includes('sandbox-crc-key'), false)
+  })
+
+  it('leaves initialization unknown after an ambiguous registration result', async () => {
+    const cases = [
+      [
+        'timeout',
+        () => {
+          throw new P24TimeoutError()
+        },
+      ],
+      [
+        'http',
+        () => {
+          throw new P24HttpError(400)
+        },
+      ],
+      [
+        'network',
+        () => {
+          throw new P24NetworkError()
+        },
+      ],
+      ['json', () => useBrokenFetch('not-json')],
+      ['incomplete', () => useBrokenFetch('{"responseCode":0}')],
+    ]
+
+    for (const [name, prepare] of cases) {
+      const calls = { register: 0 }
+      if (name === 'json' || name === 'incomplete') {
+        prepare()
+      } else {
+        clientFactory = () => ({
+          async registerTransaction() {
+            calls.register += 1
+            prepare()
+          },
+          async getTransactionBySessionId() {
+            throw new Error(`${name} lookup`)
+          },
+        })
+      }
+      const session = await onlineCart()
+      const result = await onlineCheckout(session)
+      const row = await onlineRow(result.payload.data.id)
+
+      assert.equal(result.status, 201, name)
+      assert.equal(result.payload.data.id, row.order_id)
+      assert.equal(result.payload.data.payment.initializationStatus, 'unknown')
+      assert.equal(result.payload.data.payment.redirectUrl, undefined)
+      assert.equal(row.initialization_status, 'unknown')
+      assert.equal(row.redirect_token, null)
+      assert.equal(row.status, 'pending')
+      assert.equal(row.payment_status, 'pending')
+    }
+  })
+
+  it('reads an unknown payment by session id and does not register again', async () => {
+    const calls = { register: 0, lookup: 0 }
+    let lookupError = null
+    clientFactory = () => ({
+      async registerTransaction() {
+        calls.register += 1
+        throw new P24TimeoutError()
+      },
+      async getTransactionBySessionId(sessionId) {
+        calls.lookup += 1
+        if (lookupError) {
+          throw lookupError
+        }
+        return { sessionId, orderId: '15', status: '0' }
+      },
+    })
+    const session = await onlineCart()
+    const created = await onlineCheckout(session)
+
+    for (const status of ['0', '1', '2', '3']) {
+      calls.lookup = 0
+      clientFactory = () => ({
+        async registerTransaction() {
+          calls.register += 1
+          throw new Error('register')
+        },
+        async getTransactionBySessionId(sessionId) {
+          calls.lookup += 1
+          return { sessionId, orderId: '15', status }
+        },
+      })
+      const repeated = await onlineCheckout(session)
+      const row = await onlineRow(created.payload.data.id)
+
+      assert.equal(repeated.status, 201)
+      assert.equal(
+        repeated.payload.data.payment.initializationStatus,
+        'unknown',
+      )
+      assert.equal(row.status, 'pending')
+      assert.equal(row.payment_status, 'pending')
+      assert.equal(row.redirect_token, null)
+      assert.equal(calls.lookup, 1)
+      assert.equal(calls.register, 1)
+    }
+
+    lookupError = new P24HttpError(404)
+    clientFactory = () => ({
+      async registerTransaction() {
+        calls.register += 1
+        throw new Error('register')
+      },
+      async getTransactionBySessionId() {
+        calls.lookup += 1
+        throw lookupError
+      },
+    })
+    const missing = await onlineCheckout(session)
+    const afterMissing = await onlineRow(created.payload.data.id)
+
+    assert.equal(missing.status, 201)
+    assert.equal(afterMissing.initialization_status, 'unknown')
+    assert.equal(calls.register, 1)
+  })
+
+  it('starts the first registration when a committed payment is still not_started', async () => {
+    const session = await onlineCart()
+    const body = checkoutBody(session.email, { paymentMethod: 'online' })
+    const created = await database.withTransaction((tx) =>
+      placeCheckoutOrder(tx, {
+        owner: { kind: 'guest', key: session.hash },
+        idempotencyKey: session.key,
+        body,
+        onlineReady: true,
+      }),
+    )
+    const before = await onlineRow(created.online.orderId)
+    const calls = { register: 0, lookup: 0 }
+    clientFactory = () => ({
+      async registerTransaction() {
+        calls.register += 1
+        return { token: 'tok_resumed' }
+      },
+      async getTransactionBySessionId() {
+        calls.lookup += 1
+        return { sessionId: before.payment_id, orderId: '15', status: '0' }
+      },
+    })
+    const resumed = await onlineCheckout(session, { body })
+    const after = await onlineRow(created.online.orderId)
+
+    assert.equal(before.initialization_status, 'not_started')
+    assert.equal(before.redirect_token, null)
+    assert.equal(resumed.status, 201)
+    assert.equal(after.initialization_status, 'registered')
+    assert.equal(after.redirect_token, 'tok_resumed')
+    assert.equal(calls.register, 1)
+    assert.equal(calls.lookup, 0)
+  })
+
+  it('does not keep a token when the payment changed during registration', async () => {
+    const mutations = [
+      async (paymentId) => {
+        await database.query(
+          `
+            UPDATE public.payments
+            SET status = 'paid', paid_at = clock_timestamp(), provider_transaction_id = $2
+            WHERE id = $1
+          `,
+          [paymentId, `paid-${paymentId}`],
+        )
+        await database.query(
+          `
+            UPDATE public.orders
+            SET payment_status = 'paid'
+            WHERE id = (SELECT order_id FROM public.payments WHERE id = $1)
+          `,
+          [paymentId],
+        )
+      },
+      async (paymentId) => {
+        await database.query(
+          `
+            UPDATE public.payments
+            SET provider_transaction_id = $2
+            WHERE id = $1
+          `,
+          [paymentId, `txn-${paymentId}`],
+        )
+      },
+      async (paymentId) => {
+        await database.query(
+          `
+            UPDATE public.payments
+            SET initialization_status = 'rejected'
+            WHERE id = $1
+          `,
+          [paymentId],
+        )
+      },
+      async (paymentId) => {
+        await database.query(
+          `
+            UPDATE public.payments
+            SET initialization_status = 'registered', redirect_token = 'kept_token'
+            WHERE id = $1
+          `,
+          [paymentId],
+        )
+      },
+    ]
+
+    for (const mutate of mutations) {
+      clientFactory = () => ({
+        async registerTransaction(input) {
+          await mutate(input.sessionId)
+          return { token: 'tok_rejected' }
+        },
+        async getTransactionBySessionId() {
+          throw new Error('lookup')
+        },
+      })
+      const session = await onlineCart()
+      const result = await onlineCheckout(session)
+      const row = await onlineRow(result.payload.data.id)
+
+      assert.equal(result.status, 201)
+      assert.notEqual(row.redirect_token, 'tok_rejected')
+      assert.equal(row.payment_status, result.payload.data.paymentStatus)
+      assert.equal(
+        result.payload.data.payment.initializationStatus,
+        row.initialization_status,
+      )
+    }
+  })
+
+  it('does not save a token when amount, currency, or order do not match', async () => {
+    clientFactory = () => ({
+      async registerTransaction() {
+        throw new P24TimeoutError()
+      },
+      async getTransactionBySessionId() {
+        throw new Error('lookup')
+      },
+    })
+    const session = await onlineCart()
+    const created = await onlineCheckout(session)
+    const row = await onlineRow(created.payload.data.id)
+    const mismatches = [
+      { ...row, amount: '101' },
+      { ...row, payment_currency: 'EUR' },
+      { ...row, order_id: '00000000-0000-4000-8000-000000000099' },
+    ]
+
+    for (const candidate of mismatches) {
+      const updated = await database.withTransaction((tx) =>
+        writeRegistrationToken(tx, candidate, 'tok_amount'),
+      )
+      const current = await onlineRow(created.payload.data.id)
+
+      assert.equal(updated, 0)
+      assert.equal(current.initialization_status, 'unknown')
+      assert.equal(current.redirect_token, null)
+      assert.equal(current.amount, '100')
+    }
+  })
+
+  it('leaves unknown when lookup data does not belong to the payment', async () => {
+    const modes = [
+      'foreign-session',
+      'bad-order',
+      'incomplete',
+      'invalid-json',
+      'network',
+    ]
+
+    for (const mode of modes) {
+      let stage = 'register'
+      useFetch(async (url, options) => {
+        if (stage === 'register') {
+          if (options.method !== 'POST') {
+            throw new TypeError('lookup during registration')
+          }
+          const error = new Error('aborted')
+          error.name = 'AbortError'
+          throw error
+        }
+
+        if (mode === 'network') {
+          throw new TypeError('socket closed')
+        }
+        if (mode === 'invalid-json') {
+          return jsonResult(200, 'not-json')
+        }
+        if (mode === 'incomplete') {
+          return jsonResult(200, '{"responseCode":0}')
+        }
+        if (mode === 'bad-order') {
+          const sessionId = decodeURIComponent(String(url).split('/').at(-1))
+          return jsonResult(
+            200,
+            `{"responseCode":0,"data":{"orderId":-1,"sessionId":${JSON.stringify(sessionId)},"status":0,"amount":1,"currency":"PLN"}}`,
+          )
+        }
+
+        return jsonResult(
+          200,
+          '{"responseCode":0,"data":{"orderId":15,"sessionId":"other-session","status":2,"amount":1,"currency":"PLN"}}',
+        )
+      })
+      const session = await onlineCart()
+      const created = await onlineCheckout(session)
+      stage = 'lookup'
+      const repeated = await onlineCheckout(session)
+      const row = await onlineRow(created.payload.data.id)
+
+      assert.equal(created.status, 201, mode)
+      assert.equal(repeated.status, 201, mode)
+      assert.equal(row.initialization_status, 'unknown', mode)
+      assert.equal(row.redirect_token, null, mode)
+      assert.equal(row.status, 'pending', mode)
+      assert.equal(row.payment_status, 'pending', mode)
+    }
+  })
+
+  it('serializes parallel checkout of the same idempotency key', async () => {
+    let entered = 0
+    let release
+    const gate = new Promise((resolve) => {
+      release = resolve
+    })
+    clientFactory = () => ({
+      async registerTransaction() {
+        entered += 1
+        if (entered === 1) {
+          await gate
+        }
+        return { token: 'tok_parallel' }
+      },
+      async getTransactionBySessionId() {
+        throw new Error('lookup')
+      },
+    })
+    const session = await onlineCart()
+    const pending = Promise.all([
+      onlineCheckout(session),
+      onlineCheckout(session),
+    ])
+    const started = Date.now()
+
+    while (entered < 1 && Date.now() - started < 5000) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    assert.equal(entered, 1)
+    release()
+    const results = await pending
+    const ids = results.map((result) => result.payload.data.id)
+
+    assert.equal(results[0].status, 201)
+    assert.equal(results[1].status, 201)
+    assert.equal(ids[0], ids[1])
+    assert.equal(entered, 1)
+    assert.equal((await onlineRow(ids[0])).redirect_token, 'tok_parallel')
+    assert.equal(await countOrders(session.email), 1)
+  })
+
+  it('keeps a committed order when the payment read fails and recovers it on retry', async () => {
+    clientFactory = () => ({
+      async registerTransaction() {
+        return { token: 'tok_recovered' }
+      },
+      async getTransactionBySessionId() {
+        throw new Error('lookup')
+      },
+    })
+    const session = await onlineCart()
+    const original = database.withSessionLock.bind(database)
+    database.withSessionLock = async () => {
+      throw new Error('payment read failed')
+    }
+
+    try {
+      const failed = await onlineCheckout(session)
+      const stored = await database.query(
+        `
+          SELECT id
+          FROM public.orders
+          WHERE customer_email = $1
+        `,
+        [session.email],
+      )
+
+      assert.equal(failed.status, 503)
+      assert.equal(failed.payload.error.code, 'SERVICE_UNAVAILABLE')
+      assert.equal(failed.payload.error.message, 'Service unavailable')
+      assert.equal(stored.rows.length, 1)
+    } finally {
+      database.withSessionLock = original
+    }
+
+    const recovered = await onlineCheckout(session)
+    const row = await onlineRow(recovered.payload.data.id)
+
+    assert.equal(recovered.status, 201)
+    assert.equal(row.initialization_status, 'registered')
+    assert.equal(row.redirect_token, 'tok_recovered')
+  })
+
+  it('rolls back an online order and restores an expired idempotency key', async () => {
+    clientFactory = () => ({
+      async registerTransaction() {
+        return { token: 'tok_first' }
+      },
+      async getTransactionBySessionId() {
+        throw new Error('lookup')
+      },
+    })
+    const session = await onlineCart()
+    const created = await onlineCheckout(session)
+
+    assert.equal(created.status, 201)
+
+    const previous = await expireIdempotency(session)
+    await openActiveCart(session)
+    const before = await countOrders(session.email)
+    database.withTransaction = async (work) =>
+      placeTransaction(async (tx) =>
+        work({
+          query(text, params) {
+            if (text.includes('INSERT INTO public.inventory_reservations')) {
+              throw new Error('injected fault')
+            }
+
+            return tx.query(text, params)
+          },
+        }),
+      )
+
+    try {
+      const failed = await onlineCheckout(session)
+      const keys = await idempotencyRows(session)
+
+      assert.equal(failed.status, 503)
+      assert.equal(keys.length, 1)
+      assert.equal(keys[0].id, previous.id)
+      assert.equal(keys[0].current, false)
+      assert.equal(await countOrders(session.email), before)
+    } finally {
+      database.withTransaction = placeTransaction
+    }
+  })
+
+  it('does not create an online order when production checkout is disabled', async () => {
+    const session = await onlineCart()
+    const before = await countOrders(session.email)
+    const response = await fetch(`${productionBaseUrl}/api/v1/checkout`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': session.key,
+        cookie: `shop_guest_session=${session.raw}`,
+      },
+      body: JSON.stringify(
+        checkoutBody(session.email, { paymentMethod: 'online' }),
+      ),
+    })
+    const payload = await response.json()
+
+    assert.equal(response.status, 503)
+    assert.equal(payload.error.code, 'SERVICE_UNAVAILABLE')
+    assert.equal(productionCalls.length, 0)
+    assert.equal(await countOrders(session.email), before)
+    assert.equal(await cartStatus(session.hash), 'active')
   })
 })
 
@@ -931,6 +1530,95 @@ async function countReservations(email) {
     [email],
   )
   return result.rows[0].total
+}
+
+function useFetch(fetchImpl) {
+  clientFactory = () => createP24Client(sandboxP24, { fetch: fetchImpl })
+}
+
+function useBrokenFetch(body) {
+  useFetch(async (_url, options) => {
+    assert.equal(options.method, 'POST')
+    return jsonResult(200, body)
+  })
+}
+
+function jsonResult(status, body) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async text() {
+      return body
+    },
+  }
+}
+
+async function onlineCart() {
+  await setSeller('exempt')
+  const session = await guestCart({
+    taxStatus: 'exempt',
+    vatRate: null,
+    stock: 3,
+  })
+  session.email = `b${session.hash.slice(0, 12)}@checkout.test`
+  return session
+}
+
+async function onlineCheckout(session, { key = session.key, body } = {}) {
+  const response = await fetch(`${onlineBaseUrl}/api/v1/checkout`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'idempotency-key': key,
+      cookie: `shop_guest_session=${session.raw}`,
+    },
+    body: JSON.stringify(
+      body ?? checkoutBody(session.email, { paymentMethod: 'online' }),
+    ),
+  })
+
+  return { status: response.status, payload: await response.json() }
+}
+
+async function onlineRow(orderId) {
+  const result = await database.query(
+    `
+      SELECT
+        o.id AS order_id,
+        o.payment_status,
+        o.gross_amount::text AS gross_amount,
+        p.id AS payment_id,
+        p.status,
+        p.initialization_status,
+        p.redirect_token,
+        p.provider_transaction_id,
+        p.amount::text AS amount,
+        btrim(p.currency) AS payment_currency,
+        r.payment_method AS reservation_method,
+        r.status AS reservation_status,
+        (
+          r.expires_at > clock_timestamp() + interval '14 minutes'
+          AND r.expires_at <= clock_timestamp() + interval '16 minutes'
+        ) AS reservation_window,
+        pr.stock_quantity,
+        ik.response_status,
+        ik.response_body,
+        c.status AS cart_status
+      FROM public.orders AS o
+      JOIN public.payments AS p ON p.order_id = o.id
+      JOIN public.inventory_reservations AS r ON r.order_id = o.id
+      JOIN public.products AS pr ON pr.id = r.product_id
+      JOIN public.idempotency_keys AS ik ON ik.order_id = o.id
+      JOIN public.carts AS c
+        ON c.session_id = ik.session_id
+       AND c.status = 'converted'
+      WHERE o.id = $1
+    `,
+    [orderId],
+  )
+
+  assert.equal(result.rows.length, 1)
+  return result.rows[0]
 }
 
 async function cartStatus(hash) {

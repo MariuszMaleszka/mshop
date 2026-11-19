@@ -35,6 +35,8 @@ const envSchema = z
     P24_CRC_KEY: z.string().optional(),
     P24_API_SECRET: z.string().optional(),
     P24_REQUEST_TIMEOUT_MS: z.string().optional(),
+    P24_URL_RETURN: z.string().optional(),
+    P24_URL_STATUS: z.string().optional(),
   })
   .strip()
 
@@ -67,6 +69,8 @@ function readEnv(env) {
     P24_CRC_KEY: blankToUndefined(env?.P24_CRC_KEY),
     P24_API_SECRET: blankToUndefined(env?.P24_API_SECRET),
     P24_REQUEST_TIMEOUT_MS: blankToUndefined(env?.P24_REQUEST_TIMEOUT_MS),
+    P24_URL_RETURN: blankToUndefined(env?.P24_URL_RETURN),
+    P24_URL_STATUS: blankToUndefined(env?.P24_URL_STATUS),
   }
 }
 
@@ -353,6 +357,10 @@ function readP24Config(env, nodeEnv, ctx) {
       )
     }
 
+    if (env.P24_URL_RETURN !== undefined || env.P24_URL_STATUS !== undefined) {
+      addIssue(ctx, 'P24_URL_RETURN', 'requires the Przelewy24 configuration')
+    }
+
     return null
   }
 
@@ -414,13 +422,28 @@ function readP24Config(env, nodeEnv, ctx) {
     addIssue(ctx, 'P24_CRC_KEY', 'must be different from P24_API_SECRET')
   }
 
+  const urlReturn = readP24Url(
+    env.P24_URL_RETURN,
+    'P24_URL_RETURN',
+    environment,
+    ctx,
+  )
+  const urlStatus = readP24Url(
+    env.P24_URL_STATUS,
+    'P24_URL_STATUS',
+    environment,
+    ctx,
+  )
+
   if (
     !environment ||
     !merchantId ||
     !posId ||
     !crcKey ||
     !secretId ||
-    requestTimeoutMs === null
+    requestTimeoutMs === null ||
+    !urlReturn.ok ||
+    !urlStatus.ok
   ) {
     return null
   }
@@ -433,7 +456,38 @@ function readP24Config(env, nodeEnv, ctx) {
     secretId,
     apiBaseUrl: P24_API_BASE_URLS[environment],
     requestTimeoutMs,
+    urlReturn: urlReturn.value,
+    urlStatus: urlStatus.value,
   }
+}
+
+function readP24Url(value, field, environment, ctx) {
+  if (value === undefined) {
+    return { ok: true, value: null }
+  }
+
+  let url
+
+  try {
+    url = new URL(value)
+  } catch {
+    url = null
+  }
+
+  const protocolOk =
+    url?.protocol === 'https:' ||
+    (environment === 'sandbox' && url?.protocol === 'http:')
+
+  if (!url || value.length > 250 || !protocolOk) {
+    addIssue(
+      ctx,
+      field,
+      'must be an absolute HTTPS URL of at most 250 characters',
+    )
+    return { ok: false, value: null }
+  }
+
+  return { ok: true, value }
 }
 
 const configSchema = envSchema.transform((env, ctx) => {

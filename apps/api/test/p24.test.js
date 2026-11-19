@@ -4,6 +4,12 @@ import { describe, it } from 'node:test'
 import { loadConfig } from '../src/config.js'
 import { createP24Client } from '../src/p24/client.js'
 import {
+  jsonIntegerDigits,
+  jsonNumberText,
+  parseJsonWithIntegerStrings,
+} from '../src/p24/json.js'
+import { transactionPanelUrl } from '../src/p24/redirect.js'
+import {
   P24DataError,
   P24HttpError,
   P24NetworkError,
@@ -192,6 +198,31 @@ describe('Przelewy24 signatures', () => {
         }),
       P24DataError,
     )
+  })
+
+  it('escapes backslash, quote, and newline without escaping a slash', () => {
+    const statement = 'a\\b "ł"\n/'
+    const documented =
+      '{"merchantId":1,"posId":2,"sessionId":"a/b","amount":3,"originAmount":3,"currency":"PLN","orderId":1,"methodId":4,"statement":' +
+      JSON.stringify(statement) +
+      ',"crc":"crc"}'
+    const sign = verifyTransactionNotification({
+      merchantId: '1',
+      posId: '2',
+      sessionId: 'a/b',
+      amount: '3',
+      originAmount: '3',
+      currency: 'PLN',
+      orderId: '1',
+      methodId: '4',
+      statement,
+      crc: CRC,
+      sign: sha384(documented),
+    })
+
+    assert.equal(documented.includes('a\\\\b \\"ł\\"\\n/'), true)
+    assert.equal(documented.includes('\\/'), false)
+    assert.equal(sign, true)
   })
 })
 
@@ -477,6 +508,218 @@ describe('Przelewy24 HTTP client', () => {
           currency: 'PLN',
         }),
       /missing a status/,
+    )
+  })
+
+  it('accepts the documented testAccess object and rejects a wrong data type', async () => {
+    const valid = createP24Client(clientConfig(), {
+      async fetch() {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return '{"data":true,"error":"ok"}'
+          },
+        }
+      },
+    })
+    const invalid = createP24Client(clientConfig(), {
+      async fetch() {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return '{"data":1}'
+          },
+        }
+      },
+    })
+
+    assert.deepEqual(await valid.testAccess(), { data: true, error: 'ok' })
+    await assert.rejects(() => invalid.testAccess(), /invalid data value/)
+  })
+
+  it('returns every documented transaction field without mapping the provider status', async () => {
+    const client = createP24Client(clientConfig(), {
+      async fetch() {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return `{"responseCode":0,"data":{"statement":"tytuł / \\"a\\\\b\\"","orderId":${BIG_ORDER_ID},"sessionId":"session-1","status":2,"amount":1234,"currency":"PLN","date":"2026-01-01","dateOfTransaction":"2026-01-02","clientEmail":"a@b.co","accountMD5":"abc","paymentMethod":25,"description":"opis","clientName":"Jan","clientAddress":"Ul 1","clientCity":"Miasto","clientPostcode":"00-001","batchId":7,"fee":"0"}}`
+          },
+        }
+      },
+    })
+
+    const result = await client.getTransactionBySessionId('session-1')
+
+    assert.equal(result.orderId, BIG_ORDER_ID)
+    assert.equal(typeof result.orderId, 'string')
+    assert.equal(result.statement, 'tytuł / "a\\b"')
+    assert.equal(result.status, '2')
+    assert.equal(result.amount, '1234')
+    assert.equal(result.paymentMethod, '25')
+    assert.equal(result.batchId, '7')
+    assert.equal(result.fee, '0')
+    assert.equal(result.date, '2026-01-01')
+    assert.equal(result.dateOfTransaction, '2026-01-02')
+    assert.equal(result.paymentStatus, undefined)
+  })
+
+  it('keeps exact JSON number text and validates orderId as an integer field', async () => {
+    const max = parseJsonWithIntegerStrings(`{"orderId":${BIG_ORDER_ID}}`)
+    assert.equal(jsonIntegerDigits(max.orderId), BIG_ORDER_ID)
+
+    const numbers = parseJsonWithIntegerStrings(
+      '{"fraction":9223372036854775807.0,"exponent":1e20,"signed":1E+2,"cents":1.50,"whole":10}',
+    )
+    assert.equal(jsonNumberText(numbers.fraction), '9223372036854775807.0')
+    assert.equal(jsonIntegerDigits(numbers.fraction), null)
+    assert.equal(jsonNumberText(numbers.exponent), '1e20')
+    assert.equal(jsonNumberText(numbers.signed), '1E+2')
+    assert.equal(jsonNumberText(numbers.cents), '1.50')
+    assert.equal(jsonIntegerDigits(numbers.whole), '10')
+
+    for (const raw of [
+      '{"orderId":01}',
+      '{"orderId":1.}',
+      '{"orderId":1e}',
+      '{"orderId":+1}',
+      '{"orderId":1,"orderId":2}',
+      '{"data":{"orderId":1,"orderId":2}}',
+      '{"data":{"nested":{"a":1,"a":2}}}',
+    ]) {
+      assert.throws(() => parseJsonWithIntegerStrings(raw), P24ResponseError)
+    }
+
+    for (const orderId of [
+      '-1',
+      '0',
+      '"15"',
+      '9223372036854775808',
+      '9223372036854775807.0',
+      '1e20',
+    ]) {
+      const client = createP24Client(clientConfig(), {
+        async fetch() {
+          return {
+            ok: true,
+            status: 200,
+            async text() {
+              return `{"responseCode":0,"data":{"orderId":${orderId},"sessionId":"session-1","status":0,"amount":1,"currency":"PLN"}}`
+            },
+          }
+        },
+      })
+
+      await assert.rejects(
+        () => client.getTransactionBySessionId('session-1'),
+        (error) => {
+          assert.equal(error instanceof P24ResponseError, true)
+          assert.equal(error.message.includes('9223372036854775808'), false)
+          return true
+        },
+      )
+    }
+  })
+
+  it('times out while waiting for headers or the body and does not retry', async () => {
+    const headerCalls = []
+    const headerClient = createP24Client(
+      { ...clientConfig(), requestTimeoutMs: 1000 },
+      {
+        fetch(_url, options) {
+          headerCalls.push(1)
+          return new Promise((_resolve, reject) => {
+            options.signal.addEventListener('abort', () => {
+              const error = new Error('aborted')
+              error.name = 'AbortError'
+              reject(error)
+            })
+          })
+        },
+      },
+    )
+    const bodyCalls = []
+    const bodyClient = createP24Client(
+      { ...clientConfig(), requestTimeoutMs: 1000 },
+      {
+        async fetch() {
+          bodyCalls.push(1)
+          return {
+            ok: true,
+            status: 200,
+            text() {
+              return new Promise(() => {})
+            },
+          }
+        },
+      },
+    )
+
+    await assert.rejects(() => headerClient.testAccess(), P24TimeoutError)
+    await assert.rejects(() => bodyClient.testAccess(), P24TimeoutError)
+    assert.equal(headerCalls.length, 1)
+    assert.equal(bodyCalls.length, 1)
+  })
+
+  it('clears the timeout after the response body is read', async () => {
+    const created = []
+    const cleared = []
+    const originalSet = globalThis.setTimeout
+    const originalClear = globalThis.clearTimeout
+    globalThis.setTimeout = (fn, ms, ...args) => {
+      const id = originalSet(fn, ms, ...args)
+      if (ms === 1000) {
+        created.push(id)
+      }
+      return id
+    }
+    globalThis.clearTimeout = (id) => {
+      cleared.push(id)
+      return originalClear(id)
+    }
+
+    try {
+      const client = createP24Client(
+        { ...clientConfig(), requestTimeoutMs: 1000 },
+        {
+          async fetch() {
+            return {
+              ok: true,
+              status: 200,
+              async text() {
+                return '{"data":true}'
+              },
+            }
+          },
+        },
+      )
+
+      assert.deepEqual(await client.testAccess(), { data: true })
+      assert.equal(created.length, 1)
+      assert.equal(cleared.includes(created[0]), true)
+    } finally {
+      globalThis.setTimeout = originalSet
+      globalThis.clearTimeout = originalClear
+    }
+  })
+})
+
+describe('Przelewy24 redirect URL', () => {
+  it('builds only the documented production panel address', () => {
+    assert.equal(
+      transactionPanelUrl('production', 'token_1'),
+      'https://secure.przelewy24.pl/trnRequest/token_1',
+    )
+    assert.equal(transactionPanelUrl('sandbox', 'token_1'), null)
+    assert.equal(transactionPanelUrl('production', 'a b'), null)
+    assert.equal(
+      transactionPanelUrl('production', 'token_1').includes(
+        'sandbox.przelewy24.pl',
+      ),
+      false,
     )
   })
 })

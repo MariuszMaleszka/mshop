@@ -22,6 +22,9 @@ export function createDatabase({
       async withTransaction() {
         throw new Error('Database is not configured')
       },
+      async withSessionLock() {
+        throw new Error('Database is not configured')
+      },
       async checkConnection() {
         return false
       },
@@ -55,27 +58,53 @@ export function createDatabase({
       const client = await pool.connect()
 
       try {
-        await client.query('BEGIN')
-
-        try {
-          const result = await work({
-            query(text, params = []) {
-              return runQuery(client, text, params)
-            },
-          })
-          await client.query('COMMIT')
-          return result
-        } catch (error) {
-          try {
-            await client.query('ROLLBACK')
-          } catch {
-            // The caller receives the original transaction error.
-          }
-
-          throw error
-        }
+        return await runTransaction(client, work)
       } finally {
         client.release()
+      }
+    },
+
+    async withSessionLock(namespace, key, work) {
+      if (typeof work !== 'function') {
+        throw new TypeError('Session lock work is required')
+      }
+
+      assertLockPart(namespace)
+      assertLockPart(key)
+      const client = await pool.connect()
+      let locked = false
+
+      try {
+        await client.query(
+          'SELECT pg_advisory_lock($1::integer, $2::integer)',
+          [namespace, key],
+        )
+        locked = true
+        return await work({
+          query(text, params = []) {
+            return runQuery(client, text, params)
+          },
+          transaction(nested) {
+            return runTransaction(client, nested)
+          },
+        })
+      } finally {
+        let unlockFailed = false
+
+        if (locked) {
+          try {
+            await client.query(
+              'SELECT pg_advisory_unlock($1::integer, $2::integer)',
+              [namespace, key],
+            )
+          } catch {
+            unlockFailed = true
+          }
+        }
+
+        client.release(
+          unlockFailed ? new Error('advisory unlock failed') : undefined,
+        )
       }
     },
 
@@ -97,6 +126,34 @@ export function createDatabase({
       closed = true
       await pool.end()
     },
+  }
+}
+
+async function runTransaction(client, work) {
+  await client.query('BEGIN')
+
+  try {
+    const result = await work({
+      query(text, params = []) {
+        return runQuery(client, text, params)
+      },
+    })
+    await client.query('COMMIT')
+    return result
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      // The caller receives the original transaction error.
+    }
+
+    throw error
+  }
+}
+
+function assertLockPart(value) {
+  if (!Number.isInteger(value) || value < -2147483648 || value > 2147483647) {
+    throw new TypeError('Invalid advisory lock key')
   }
 }
 

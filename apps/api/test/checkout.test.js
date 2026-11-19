@@ -268,6 +268,19 @@ describe('POST /api/v1/checkout', () => {
     }
   })
 
+  it('rejects an online email above 50 characters before a transaction', async () => {
+    const database = fakeDatabase()
+    const result = await request(database, {
+      cookie: `shop_guest_session=${sessionId}`,
+      body: validBody({ email: `${'a'.repeat(39)}@example.com` }),
+    })
+
+    assert.equal(result.status, 400)
+    assert.equal(result.payload.error.code, 'VALIDATION_ERROR')
+    assert.equal(result.payload.error.details[0].path, 'email')
+    assert.equal(database.calls.length, 0)
+  })
+
   it('rejects a malformed guest session', async () => {
     const database = fakeDatabase()
     const result = await request(database, {

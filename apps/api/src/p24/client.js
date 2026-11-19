@@ -9,6 +9,7 @@ import {
   canonicalJson,
   decimalInteger,
   encodeJsonString,
+  jsonIntegerDigits,
   parseJsonWithIntegerStrings,
 } from './json.js'
 import {
@@ -25,53 +26,76 @@ export function createP24Client(config, dependencies = {}) {
   async function request(path, { method, body }) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), config.requestTimeoutMs)
-    let response
 
     try {
-      response = await fetchImpl(`${config.apiBaseUrl}${path}`, {
-        method,
-        redirect: 'error',
-        signal: controller.signal,
-        headers: {
-          authorization: basicAuthorization(config.posId, config.secretId),
-          accept: 'application/json',
-          ...(body === undefined
-            ? {}
-            : { 'content-type': 'application/json; charset=utf-8' }),
-        },
-        body,
-      })
-    } catch (error) {
-      if (controller.signal.aborted || error?.name === 'TimeoutError') {
-        throw new P24TimeoutError()
+      let response
+
+      try {
+        response = await fetchImpl(`${config.apiBaseUrl}${path}`, {
+          method,
+          redirect: 'error',
+          signal: controller.signal,
+          headers: {
+            authorization: basicAuthorization(config.posId, config.secretId),
+            accept: 'application/json',
+            ...(body === undefined
+              ? {}
+              : { 'content-type': 'application/json; charset=utf-8' }),
+          },
+          body,
+        })
+      } catch (error) {
+        throw classifyTransportError(error, controller)
       }
 
-      throw new P24NetworkError()
+      let text
+
+      try {
+        text = await readResponseText(response, controller.signal)
+      } catch (error) {
+        throw classifyTransportError(error, controller)
+      }
+
+      if (!response.ok) {
+        throw new P24HttpError(response.status)
+      }
+
+      return parseJsonWithIntegerStrings(text)
     } finally {
       clearTimeout(timer)
     }
-
-    const text = await response.text()
-
-    if (!response.ok) {
-      throw new P24HttpError(response.status)
-    }
-
-    return parseJsonWithIntegerStrings(text)
   }
 
   return {
     async testAccess() {
       const body = await request('/testAccess', { method: 'GET' })
-      const data = objectField(body, 'data')
+      const result = {}
 
-      if (data !== true || body.responseCode !== '0') {
-        throw new P24ResponseError(
-          'Przelewy24 response is missing access status',
-        )
+      if (!isJsonObject(body)) {
+        throw new P24ResponseError('Przelewy24 response is not an object')
       }
 
-      return { data: true }
+      if (Object.hasOwn(body, 'data')) {
+        if (typeof body.data !== 'boolean') {
+          throw new P24ResponseError(
+            'Przelewy24 response has an invalid data value',
+          )
+        }
+
+        result.data = body.data
+      }
+
+      if (Object.hasOwn(body, 'error')) {
+        if (typeof body.error !== 'string') {
+          throw new P24ResponseError(
+            'Przelewy24 response has an invalid error value',
+          )
+        }
+
+        result.error = body.error
+      }
+
+      return result
     },
 
     async registerTransaction(input) {
@@ -94,7 +118,7 @@ export function createP24Client(config, dependencies = {}) {
       const token = data?.token
 
       if (
-        body.responseCode !== '0' ||
+        jsonIntegerDigits(body.responseCode) !== '0' ||
         typeof token !== 'string' ||
         token.length < 1 ||
         token.length > 2048 ||
@@ -121,29 +145,16 @@ export function createP24Client(config, dependencies = {}) {
         `/transaction/by/sessionId/${encodeURIComponent(sessionId)}`,
         { method: 'GET' },
       )
-      const data = objectField(body, 'data')
-
       if (
-        body.responseCode !== '0' ||
-        !data ||
-        data.sessionId !== sessionId ||
-        !isDecimal(data.orderId) ||
-        !isDecimal(data.status) ||
-        !isDecimal(data.amount) ||
-        typeof data.currency !== 'string'
+        jsonIntegerDigits(body.responseCode) !== '0' ||
+        !isJsonObject(body.data)
       ) {
         throw new P24ResponseError(
           'Przelewy24 response is missing transaction data',
         )
       }
 
-      return {
-        orderId: data.orderId,
-        sessionId: data.sessionId,
-        status: data.status,
-        amount: data.amount,
-        currency: data.currency,
-      }
+      return transactionData(body.data, sessionId)
     },
 
     async verifyTransaction(input) {
@@ -180,7 +191,7 @@ export function createP24Client(config, dependencies = {}) {
       const status = data?.status
 
       if (
-        body.responseCode !== '0' ||
+        jsonIntegerDigits(body.responseCode) !== '0' ||
         typeof status !== 'string' ||
         status.length < 1 ||
         status.length > 32
@@ -286,12 +297,133 @@ function basicAuthorization(posId, secretId) {
   return `Basic ${Buffer.from(`${posId}:${secretId}`, 'utf8').toString('base64')}`
 }
 
+const TRANSACTION_INTEGERS = ['status', 'amount', 'paymentMethod', 'batchId']
+const TRANSACTION_STRINGS = [
+  'statement',
+  'currency',
+  'date',
+  'dateOfTransaction',
+  'clientEmail',
+  'accountMD5',
+  'description',
+  'clientName',
+  'clientAddress',
+  'clientCity',
+  'clientPostcode',
+  'fee',
+]
+const INT64_MAX = 9223372036854775807n
+
+function transactionData(data, sessionId) {
+  const orderId = jsonIntegerDigits(data.orderId)
+
+  if (
+    orderId === null ||
+    !/^[1-9][0-9]*$/.test(orderId) ||
+    BigInt(orderId) > INT64_MAX
+  ) {
+    throw new P24ResponseError('Przelewy24 response has an invalid orderId')
+  }
+
+  if (typeof data.sessionId !== 'string' || data.sessionId !== sessionId) {
+    throw new P24ResponseError(
+      'Przelewy24 response is missing transaction data',
+    )
+  }
+
+  const result = {
+    orderId,
+    sessionId: data.sessionId,
+  }
+
+  for (const field of TRANSACTION_INTEGERS) {
+    if (!Object.hasOwn(data, field)) {
+      continue
+    }
+
+    const digits = jsonIntegerDigits(data[field])
+
+    if (digits === null) {
+      throw new P24ResponseError(
+        'Przelewy24 response is missing transaction data',
+      )
+    }
+
+    result[field] = digits
+  }
+
+  for (const field of TRANSACTION_STRINGS) {
+    if (!Object.hasOwn(data, field)) {
+      continue
+    }
+
+    if (typeof data[field] !== 'string') {
+      throw new P24ResponseError(
+        'Przelewy24 response is missing transaction data',
+      )
+    }
+
+    result[field] = data[field]
+  }
+
+  return result
+}
+
 function objectField(body, field) {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+  if (!isJsonObject(body)) {
     throw new P24ResponseError('Przelewy24 response is not an object')
   }
 
   return body[field]
+}
+
+function isJsonObject(value) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    Object.getPrototypeOf(value) === Object.prototype
+  )
+}
+
+function readResponseText(response, signal) {
+  if (signal.aborted) {
+    return Promise.reject(abortError())
+  }
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortError())
+    signal.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve()
+      .then(() => response.text())
+      .then(
+        (text) => {
+          signal.removeEventListener('abort', onAbort)
+          resolve(text)
+        },
+        (error) => {
+          signal.removeEventListener('abort', onAbort)
+          reject(error)
+        },
+      )
+  })
+}
+
+function classifyTransportError(error, controller) {
+  if (
+    controller.signal.aborted ||
+    error?.name === 'TimeoutError' ||
+    error?.name === 'AbortError'
+  ) {
+    return new P24TimeoutError()
+  }
+
+  return new P24NetworkError()
+}
+
+function abortError() {
+  const error = new Error('aborted')
+  error.name = 'AbortError'
+  return error
 }
 
 function requireText(value, field, min, max) {
@@ -318,8 +450,4 @@ function requireUrl(value, field, environment) {
   if (!protocolOk) {
     throw new P24DataError(`${field} must use HTTPS`)
   }
-}
-
-function isDecimal(value) {
-  return typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value)
 }

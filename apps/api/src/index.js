@@ -39,7 +39,7 @@ const app = createApp(config, {
     registerCatalogRoutes(router, { database })
     registerGuestSessionRoutes(router, { nodeEnv: config.nodeEnv })
     registerCartRoutes(router, { database })
-    registerCheckoutRoutes(router, { database })
+    registerCheckoutRoutes(router, { database, p24: config.p24 })
   },
 })
 const server = app.listen(config.port, () => {

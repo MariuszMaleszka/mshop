@@ -6,10 +6,21 @@ import {
   hashGuestSessionId,
   readGuestSessionId,
 } from '../session/guest-session.js'
-import { CheckoutRejection, placeCashOrder } from './repository.js'
+import { settleOnlinePayment } from './online-payment.js'
+import { CheckoutRejection, placeCheckoutOrder } from './repository.js'
 import { IDEMPOTENCY_KEY_PATTERN, checkoutBodySchema } from './validation.js'
+import { createP24Client } from '../p24/client.js'
 
-export function registerCheckoutRoutes(app, { database } = {}) {
+const P24_EMAIL_MAX = 50
+
+export function registerCheckoutRoutes(
+  app,
+  {
+    database,
+    p24 = null,
+    createP24Client: createClient = createP24Client,
+  } = {},
+) {
   app.post(
     '/api/v1/checkout',
     requireIdempotencyKey,
@@ -17,14 +28,55 @@ export function registerCheckoutRoutes(app, { database } = {}) {
     selectCheckoutAccess,
     async (req, res) => {
       try {
+        const body = req.validated.body
+
+        if (
+          body.paymentMethod === 'online' &&
+          body.email.length > P24_EMAIL_MAX
+        ) {
+          throw new HttpError({
+            status: 400,
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid request data',
+            details: [
+              {
+                location: 'body',
+                path: 'email',
+                code: 'too_big',
+                message: 'Email must be at most 50 characters',
+              },
+            ],
+            logMessage: 'checkout.email',
+          })
+        }
+
+        const onlineReady = sandboxOnlineReady(p24)
         const outcome = await database.withTransaction((tx) =>
-          placeCashOrder(tx, {
+          placeCheckoutOrder(tx, {
             owner: ownerFrom(req),
             idempotencyKey: req.checkoutIdempotencyKey,
-            body: req.validated.body,
+            body,
+            onlineReady,
           }),
         )
-        res.status(outcome.status).json(outcome.body)
+
+        if (!outcome.online) {
+          res.status(outcome.status).json(outcome.body)
+          return
+        }
+
+        const settled = await settleOnlinePayment(
+          database,
+          {
+            environment: p24?.environment ?? null,
+            urlReturn: p24?.urlReturn ?? null,
+            urlStatus: p24?.urlStatus ?? null,
+            publishRedirect: p24?.environment === 'sandbox',
+            client: onlineReady ? createClient(p24) : null,
+          },
+          outcome.online,
+        )
+        res.status(settled.status).json(settled.body)
       } catch (error) {
         if (error instanceof CheckoutRejection) {
           throw new HttpError({
@@ -47,6 +99,15 @@ export function registerCheckoutRoutes(app, { database } = {}) {
         })
       }
     },
+  )
+}
+
+function sandboxOnlineReady(p24) {
+  // Production online checkout stays off until the reservation worker and webhook exist.
+  return (
+    p24?.environment === 'sandbox' &&
+    typeof p24.urlReturn === 'string' &&
+    typeof p24.urlStatus === 'string'
   )
 }
 
