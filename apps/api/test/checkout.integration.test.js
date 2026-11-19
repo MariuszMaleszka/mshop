@@ -536,6 +536,9 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
       stock: 3,
     })
     const created = await checkout(session)
+
+    assert.equal(created.status, 201)
+
     const previous = await expireIdempotency(session)
     await openActiveCart(session)
     const before = await counts()
