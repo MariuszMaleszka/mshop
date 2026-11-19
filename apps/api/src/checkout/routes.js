@@ -6,7 +6,7 @@ import {
   hashGuestSessionId,
   readGuestSessionId,
 } from '../session/guest-session.js'
-import { readCheckoutPreconditions } from './repository.js'
+import { CheckoutRejection, placeCashOrder } from './repository.js'
 import { IDEMPOTENCY_KEY_PATTERN, checkoutBodySchema } from './validation.js'
 
 export function registerCheckoutRoutes(app, { database } = {}) {
@@ -15,9 +15,37 @@ export function registerCheckoutRoutes(app, { database } = {}) {
     requireIdempotencyKey,
     validateRequest({ body: checkoutBodySchema }),
     selectCheckoutAccess,
-    async (req, _res) => {
-      const result = await readPreconditions(database, ownerFrom(req))
-      throw checkoutResult(result)
+    async (req, res) => {
+      try {
+        const outcome = await database.withTransaction((tx) =>
+          placeCashOrder(tx, {
+            owner: ownerFrom(req),
+            idempotencyKey: req.checkoutIdempotencyKey,
+            body: req.validated.body,
+          }),
+        )
+        res.status(outcome.status).json(outcome.body)
+      } catch (error) {
+        if (error instanceof CheckoutRejection) {
+          throw new HttpError({
+            status: error.status,
+            code: error.code,
+            message: error.message,
+            logMessage: `checkout.${error.code.toLowerCase()}`,
+          })
+        }
+
+        if (error instanceof HttpError) {
+          throw error
+        }
+
+        throw new HttpError({
+          status: 503,
+          code: 'SERVICE_UNAVAILABLE',
+          message: 'Service unavailable',
+          logMessage: 'checkout.query_failed',
+        })
+      }
     },
   )
 }
@@ -42,6 +70,7 @@ function requireIdempotencyKey(req, _res, next) {
     })
   }
 
+  req.checkoutIdempotencyKey = String(values[0])
   next()
 }
 
@@ -125,85 +154,5 @@ function cookieNamePresent(header) {
     }
 
     return part.slice(0, separator).trim() === GUEST_SESSION_COOKIE
-  })
-}
-
-async function readPreconditions(database, owner) {
-  try {
-    return await readCheckoutPreconditions(database, owner)
-  } catch (error) {
-    if (error instanceof HttpError) {
-      throw error
-    }
-
-    throw new HttpError({
-      status: 503,
-      code: 'SERVICE_UNAVAILABLE',
-      message: 'Service unavailable',
-      logMessage: 'checkout.query_failed',
-    })
-  }
-}
-
-function checkoutResult(result) {
-  if (result.outcome === 'seller_unknown') {
-    return new HttpError({
-      status: 409,
-      code: 'SELLER_TAX_STATUS_UNKNOWN',
-      message: 'Checkout is unavailable',
-      logMessage: 'checkout.seller_unknown',
-    })
-  }
-
-  if (result.outcome === 'missing') {
-    return new HttpError({
-      status: 404,
-      code: 'NOT_FOUND',
-      message: 'Resource not found',
-      logMessage: 'checkout.cart_missing',
-    })
-  }
-
-  if (result.outcome === 'converted') {
-    return new HttpError({
-      status: 409,
-      code: 'CART_CONVERTED',
-      message: 'Cart is already converted',
-      logMessage: 'checkout.cart_converted',
-    })
-  }
-
-  if (result.outcome === 'empty') {
-    return new HttpError({
-      status: 409,
-      code: 'CART_EMPTY',
-      message: 'Cart is empty',
-      logMessage: 'checkout.cart_empty',
-    })
-  }
-
-  if (result.outcome === 'inactive') {
-    return new HttpError({
-      status: 409,
-      code: 'PRODUCT_UNAVAILABLE',
-      message: 'Cart has products that cannot be purchased',
-      logMessage: 'checkout.product_unavailable',
-    })
-  }
-
-  if (result.outcome === 'ready') {
-    return new HttpError({
-      status: 501,
-      code: 'CHECKOUT_NOT_IMPLEMENTED',
-      message: 'Checkout is not implemented',
-      logMessage: 'checkout.not_implemented',
-    })
-  }
-
-  return new HttpError({
-    status: 503,
-    code: 'SERVICE_UNAVAILABLE',
-    message: 'Service unavailable',
-    logMessage: 'checkout.query_failed',
   })
 }

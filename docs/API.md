@@ -252,23 +252,22 @@ Cena pozycji koszyka nie jest utrwalana jako cena sprzedaży.
 Backend sprawdza aktywność produktu, ilość, aktualną kwotę należną i zgodność waluty produktu z walutą koszyka. Nie ufaj cenom, podatkowi ani walucie przesłanym przez frontend.
 
 ## 7. Checkout i zamówienia
-`POST /api/v1/checkout` sprawdza kontrakt i warunki wstępne. Nie tworzy zamówienia, pozycji, płatności ani rezerwacji i nie zapisuje `idempotency_keys`. Nie woła operatora płatności. Gdy kontrole przejdą, zwraca HTTP 501 `CHECKOUT_NOT_IMPLEMENTED`.
+`POST /api/v1/checkout` dla `paymentMethod = cash` tworzy zamówienie w jednej transakcji, gdy sprzedawca nie jest `unknown` i gdy nie trzeba wybierać strategii VAT dla stawki `standard`. Odpowiedź HTTP 201 zawiera identyfikator, numer, status płatności `pending`, status realizacji `new`, metodę `cash`, walutę i kwoty tekstowe w groszach. Ten sam klucz idempotencji i ten sam hash body zwracają ten zapis także po konwersji koszyka. Inny hash daje HTTP 409 `IDEMPOTENCY_KEY_REUSED`. `online` daje HTTP 501 `ONLINE_PAYMENT_NOT_IMPLEMENTED` i nie zapisuje danych. Sprzedawca `registered` z produktem `standard` daje HTTP 409 `VAT_POLICY_NOT_CONFIRMED`. `stock_quantity` równe `NULL` daje HTTP 409 `STOCK_UNKNOWN`. Za mała dostępność, liczona jako stan minus aktywne rezerwacje, daje HTTP 409 `INSUFFICIENT_STOCK`. Checkout nie zmniejsza `stock_quantity` i nie woła operatora płatności.
 
-Nagłówek `Idempotency-Key` jest wymagany: jeden, od 1 do 255 widocznych znaków ASCII. Na tym etapie nie jest zapisywany. Body: `email`, `customerType` (`individual` albo `company`), `paymentMethod` (`online` albo `cash`) oraz `billing` zgodny ze snapshotem rozliczeniowym (`firstName`, `lastName`, `companyName`, `nip`, `phone`, `recipient`, `street`, `buildingNumber`, `apartmentNumber`, `postalCode`, `city`, `countryCode`). Adresu wysyłki nie ma. Osoba fizyczna wymaga imienia i nazwiska. Firma wymaga nazwy i NIP z 10 cyfr. Ulica, numer budynku, kod `NN-NNN`, miasto i dwuliterowy kraj są zawsze wymagane.
+Nagłówek `Idempotency-Key` jest wymagany: jeden, od 1 do 255 widocznych znaków ASCII. Udane zamówienie gotówkowe zapisuje go w tej samej transakcji. Błąd walidacji i błąd biznesowy nie zostawiają zakończonej odpowiedzi. Body: `email`, `customerType` (`individual` albo `company`), `paymentMethod` (`online` albo `cash`) oraz `billing` zgodny ze snapshotem rozliczeniowym (`firstName`, `lastName`, `companyName`, `nip`, `phone`, `recipient`, `street`, `buildingNumber`, `apartmentNumber`, `postalCode`, `city`, `countryCode`). Adresu wysyłki nie ma. Osoba fizyczna wymaga imienia i nazwiska. Firma wymaga nazwy i NIP z 10 cyfr. Ulica, numer budynku, kod `NN-NNN`, miasto i dwuliterowy kraj są zawsze wymagane.
 
 Właściciela wybiera nagłówek `Authorization`, tak jak w koszyku. Konto przechodzi przez `requireAuth`. Gość wymaga jednego poprawnego `shop_guest_session`. Checkout nie scala koszyków i nie czyta identyfikatora koszyka z body.
 
-Kolejność: klucz, body, właściciel, potem odczyt `shop_profile`. Status `unknown` daje HTTP 409 `SELLER_TAX_STATUS_UNKNOWN` i nie otwiera transakcji. Brak koszyka właściciela daje HTTP 404. Sam koszyk `converted` daje HTTP 409 `CART_CONVERTED`. Pusty koszyk `active` daje HTTP 409 `CART_EMPTY`. Nieaktywny albo brakujący produkt daje HTTP 409 `PRODUCT_UNAVAILABLE`. Te odpowiedzi powstają z samych `SELECT`. Dostępność magazynowa nie jest jeszcze sprawdzana.
+Kolejność w transakcji: blokada doradcza właściciela, idempotencja, koszyk `FOR UPDATE`, `shop_profile` `FOR SHARE`, produkty `FOR UPDATE` po `id`. Status `unknown` daje HTTP 409 `SELLER_TAX_STATUS_UNKNOWN` i wycofuje transakcję. Brak koszyka właściciela daje HTTP 404. Sam koszyk `converted` daje HTTP 409 `CART_CONVERTED`, chyba że ten sam klucz i hash odtwarzają wcześniejszą odpowiedź. Pusty koszyk `active` daje HTTP 409 `CART_EMPTY`. Nieaktywny albo brakujący produkt daje HTTP 409 `PRODUCT_UNAVAILABLE`.
 
 Planowane później:
-- utworzenie zamówienia oraz płatności w `POST /api/v1/checkout`;
 - `GET /orders` — zamówienia zalogowanego klienta.
 - `GET /orders/:id` — szczegóły własnego zamówienia.
 - `POST /orders/:id/cancel` — anulowanie, jeśli reguły biznesowe na to pozwalają.
 
-Checkout jest zablokowany, gdy `seller_tax_status` wynosi `unknown`. Ten etap nie otwiera transakcji.
+Checkout jest zablokowany, gdy `seller_tax_status` wynosi `unknown`.
 
-Późniejszy zapis zamówienia ma być jedną transakcją: ponowna walidacja katalogu, snapshot rozliczeniowy, snapshot katalogowy i zastosowany snapshot podatku, sumy `net_amount`, `tax_amount` i `gross_amount`, płatność oraz oznaczenie koszyka jako przekonwertowanego. Jeśli klient bazy nie obejmuje tych zapisów jedną transakcją, ta sama kolejność idzie do funkcji SQL. Nie twórz zamówienia w stanie częściowym.
+Zapis gotówkowy jest jedną transakcją: ponowna walidacja katalogu, snapshot rozliczeniowy, snapshot katalogowy i zastosowany snapshot podatku, sumy `net_amount`, `tax_amount` i `gross_amount`, płatność `pending`, rezerwacja oraz oznaczenie koszyka jako przekonwertowanego. Nie twórz zamówienia w stanie częściowym.
 
 `gross_amount` jest kwotą do zapłaty. Dla `standard` przy czynnym podatniku tymczasowa polityka techniczna jest w `docs/DATABASE.md`: metoda „w stu”, bez zaokrąglania wyników pośrednich. Agregacja pozycji albo stawek przed half-up ma status `OPEN — ACCOUNTANT CONFIRMATION REQUIRED`. Dla `zero_rated`, `exempt`, `not_subject` oraz przy sprzedawcy `exempt` podatek wynosi 0, a netto równa się brutto. Zamówienie nie zapisuje statusu `unknown`.
 
@@ -299,7 +298,7 @@ Planowane. Wszystkie endpointy `/admin/*` mają użyć `requireAuth` i `requireA
 Wspólny schemat czyta `page` i `limit` z query string. `page` domyślnie wynosi 1, `limit` domyślnie 20, a najwyższy `limit` to 100. Obie wartości muszą być dodatnimi liczbami całkowitymi. `offset` wynosi `(page - 1) * limit`. Sortowanie, filtry domenowe i paginacja kursorowa nie są jeszcze zaimplementowane.
 
 ## 11. Idempotencja
-`POST /api/v1/checkout` już wymaga nagłówka `Idempotency-Key`, ale jeszcze go nie zapisuje i nie odtwarza poprzedniej odpowiedzi. Zapis wiersza będzie wymagany dla:
+`POST /api/v1/checkout` wymaga nagłówka `Idempotency-Key`. Udany zapis gotówkowy odkłada odpowiedź w `idempotency_keys`. Zapis wiersza będzie też wymagany dla:
 
 - `POST /api/v1/checkout`
 - `POST /payments/:id/retry`

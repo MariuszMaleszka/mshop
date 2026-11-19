@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 
 export const IDEMPOTENCY_KEY_PATTERN = /^[\x21-\x7E]{1,255}$/
@@ -42,6 +43,23 @@ export const checkoutBodySchema = z
       requireBilling(context, value.billing.nip, 'nip')
     }
   })
+
+export function checkoutRequestHash(body) {
+  const billing = {}
+
+  for (const key of Object.keys(body.billing).sort()) {
+    billing[key] = body.billing[key]
+  }
+
+  const canonical = JSON.stringify({
+    billing,
+    customerType: body.customerType,
+    email: body.email,
+    paymentMethod: body.paymentMethod,
+  })
+
+  return createHash('sha256').update(canonical, 'utf8').digest('hex')
+}
 
 function requireBilling(context, value, field) {
   if (typeof value === 'string' && value.trim() !== '') {

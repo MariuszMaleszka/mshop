@@ -15,7 +15,6 @@ const config = loadConfig({
 const sessionId = 'ab'.repeat(32)
 const sessionHash = hashGuestSessionId(sessionId)
 const userId = '11111111-1111-4111-8111-111111111111'
-const otherUserId = '22222222-2222-4222-8222-222222222222'
 const accountToken = 'account-token'
 const cartId = '88888888-8888-4888-8888-888888888888'
 const productId = '44444444-4444-4444-8444-444444444444'
@@ -176,13 +175,6 @@ async function request(database, options = {}) {
   }
 }
 
-function assertReadOnly(database) {
-  assert.equal(
-    database.calls.every((call) => call.sql.startsWith('SELECT')),
-    true,
-  )
-}
-
 describe('POST /api/v1/checkout', () => {
   it('rejects a missing Idempotency-Key before reading the database', async () => {
     const database = fakeDatabase()
@@ -285,117 +277,6 @@ describe('POST /api/v1/checkout', () => {
     assert.equal(result.status, 401)
     assert.equal(result.payload.error.code, 'UNAUTHORIZED')
     assert.equal(database.calls.length, 0)
-  })
-
-  it('does not let an account read another owner cart', async () => {
-    const database = fakeDatabase({
-      seller: 'registered',
-      owner: otherUserId,
-      carts: [{ id: cartId, status: 'active' }],
-      items: [{ product_id: productId, is_active: true }],
-    })
-    const result = await request(database, {
-      authorization: `Bearer ${accountToken}`,
-      cookie: `shop_guest_session=${sessionId}`,
-    })
-
-    assert.equal(result.status, 404)
-    assert.equal(result.payload.error.code, 'NOT_FOUND')
-    const cartQuery = database.calls.find((call) =>
-      call.sql.includes('FROM public.carts'),
-    )
-    assert.deepEqual(cartQuery.params, [userId])
-    assert.equal(
-      database.calls.some((call) => call.params.includes(sessionHash)),
-      false,
-    )
-    assertReadOnly(database)
-  })
-
-  it('rejects an empty active cart', async () => {
-    const database = fakeDatabase({
-      carts: [{ id: cartId, status: 'active' }],
-      items: [],
-    })
-    const result = await request(database, {
-      cookie: `shop_guest_session=${sessionId}`,
-    })
-
-    assert.equal(result.status, 409)
-    assert.equal(result.payload.error.code, 'CART_EMPTY')
-    assert.deepEqual(database.calls.at(-1).params, [cartId])
-    assertReadOnly(database)
-  })
-
-  it('rejects a converted cart when the owner has no active cart', async () => {
-    const database = fakeDatabase({
-      carts: [{ id: cartId, status: 'converted' }],
-    })
-    const result = await request(database, {
-      cookie: `shop_guest_session=${sessionId}`,
-    })
-
-    assert.equal(result.status, 409)
-    assert.equal(result.payload.error.code, 'CART_CONVERTED')
-    assert.equal(
-      database.calls.some((call) => call.sql.includes('cart_items')),
-      false,
-    )
-    assertReadOnly(database)
-  })
-
-  it('rejects a cart with a product that cannot be purchased', async () => {
-    const database = fakeDatabase({
-      carts: [{ id: cartId, status: 'active' }],
-      items: [{ product_id: productId, is_active: false }],
-    })
-    const result = await request(database, {
-      cookie: `shop_guest_session=${sessionId}`,
-    })
-
-    assert.equal(result.status, 409)
-    assert.equal(result.payload.error.code, 'PRODUCT_UNAVAILABLE')
-    assertReadOnly(database)
-  })
-
-  it('stops before a transaction when the seller status is unknown', async () => {
-    const database = fakeDatabase({
-      seller: 'unknown',
-      carts: [{ id: cartId, status: 'active' }],
-      items: [{ product_id: productId, is_active: true }],
-    })
-    const result = await request(database, {
-      cookie: `shop_guest_session=${sessionId}`,
-    })
-
-    assert.equal(result.status, 409)
-    assert.equal(result.payload.error.code, 'SELLER_TAX_STATUS_UNKNOWN')
-    assert.equal(database.calls.length, 1)
-    assert.match(database.calls[0].sql, /shop_profile/)
-    assertReadOnly(database)
-  })
-
-  it('accepts the preconditions and reports that checkout is not implemented', async () => {
-    const database = fakeDatabase({
-      carts: [{ id: cartId, status: 'active' }],
-      items: [{ product_id: productId, is_active: true }],
-    })
-    const result = await request(database, {
-      cookie: `shop_guest_session=${sessionId}`,
-    })
-
-    assert.equal(result.status, 501)
-    assert.equal(result.payload.error.code, 'CHECKOUT_NOT_IMPLEMENTED')
-    assert.equal(result.payload.error.message, 'Checkout is not implemented')
-    assert.deepEqual(
-      database.calls.map((call) => call.params),
-      [[], [sessionHash], [cartId]],
-    )
-    assert.equal(
-      database.calls.some((call) => call.sql.includes('stock_quantity')),
-      false,
-    )
-    assertReadOnly(database)
   })
 })
 

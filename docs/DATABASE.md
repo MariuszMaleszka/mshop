@@ -228,7 +228,9 @@ Checkout jest jedną transakcją. Przy `shop_profile.seller_tax_status = unknown
 
 Express sprawdza, że każdy produkt koszyka ma tę samą walutę co koszyk. Na MVP ta waluta musi być `PLN`. Do zamówienia i płatności trafia kod z tej chwili. Później się nie zmienia.
 
-Dla `zero_rated`, `exempt` i `not_subject` podatek wynosi 0, a netto równa się brutto. Stawki nie wyciąga się wtedy z ceny. Schemat nie liczy VAT i nie ma kalkulatora w aplikacji.
+Dla `zero_rated`, `exempt` i `not_subject` podatek wynosi 0, a netto równa się brutto. Stawki nie wyciąga się wtedy z ceny. Schemat nie liczy VAT.
+
+Czysty moduł `apps/api/src/order-amounts/calculate.js` liczy ofertę poza bazą i operatorem płatności. Checkout gotówkowy woła go tylko wtedy, gdy wynik da się zapisać bez wyboru strategii dla stawki `standard`. Wywołanie zawsze podaje strategię `per_line` albo `per_rate`. Nie ma strategii domyślnej i żadna nie jest zatwierdzoną polityką produkcyjną. Kwoty w wyniku są tekstowymi liczbami groszy. Liczenie idzie na `BigInt`: VAT procentowy to jedno dzielenie brutto × stawka / (100 + stawka), a half-up dotyczy tylko końcowego grosza. `per_line` zaokrągla VAT każdej pozycji. `per_rate` zaokrągla VAT sumy grupy i nie rozdziela go na pozycje, bo `order_items` wymaga `line_net_amount + line_tax_amount = line_gross_amount`, a reguła alokacji grosza nie jest zatwierdzona. Przy tej strategii pozycje ze stawką procentową mają puste kwoty VAT i netto oraz `lineAmountsComplete: false`. VAT równy zero jest dokładny na pozycji w obu strategiach.
 
 Tymczasowa polityka techniczna dla `standard` przy sprzedawcy `registered`, niezatwierdzona księgowo:
 
@@ -377,7 +379,9 @@ Jedna próba to jeden wiersz. Kolejna próba po `failed`, `cancelled` albo `refu
 - `order_id uuid not null`
 - `method text not null` — `online` albo `cash`
 - `provider text null` — `przelewy24` albo `stripe`, gdy `method = online`; null dla gotówki
-- `provider_transaction_id text null` — przy gotówce też null; przy online może być null, dopóki operator nie nada identyfikatora
+- `provider_transaction_id text null` — przy gotówce też null; przy online może być null, dopóki operator nie nada identyfikatora. To nie jest token przekierowania.
+- `initialization_status text null` — tylko dla `provider = przelewy24`: `not_started`, `unknown`, `registered` albo `rejected`. Gotówka i `stripe` mają null. Stan finansowy `status` pozostaje osobny.
+- `redirect_token text null` — token przekierowania Przelewy24. Wymagany wyłącznie przy `initialization_status = registered` i wtedy po `btrim` niepusty. Pozostałe stany oraz gotówka mają null.
 - `status text not null` — ten sam zestaw co `orders.payment_status`; domyślnie `pending`
 - `amount bigint not null` — check `>= 0`
 - `refunded_amount bigint not null` — domyślnie `0`; check `>= 0` i `<= amount`
@@ -506,6 +510,7 @@ Zastosowane lokalnie, w tej kolejności:
 8. `20261118100100_order_seller_snapshot.sql` — snapshot sprzedawcy w `orders`.
 9. `20261118100200_standard_vat_rates.sql` — stawki `standard` 23, 8 i 5.
 10. `20261118100300_inventory_reservations.sql` — `inventory_reservations` oraz klucze `(id, product_id)` i `(id, payment_method)`.
+11. `20261119120000_payment_initialization.sql` — `payments.initialization_status` i `payments.redirect_token` dla Przelewy24.
 
 RLS i indeksy tych tabel powstały razem z nimi.
 
