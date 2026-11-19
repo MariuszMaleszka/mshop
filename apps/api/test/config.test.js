@@ -35,6 +35,7 @@ describe('loadConfig', () => {
       supabaseUrl: null,
       supabaseAnonKey: null,
       supabaseServiceRoleKey: null,
+      p24: null,
     })
   })
 

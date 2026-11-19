@@ -29,7 +29,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publi
 - błędy HTTP przechodzą przez jedno middleware; logi nie zawierają nagłówków, body, query stringu ani sekretów;
 - dostęp do PostgreSQL idzie przez jedną pulę `pg` i serwerowy `DATABASE_URL`, bez Supabase SDK i bez ORM;
 - klucz `service_role` zostaje sekretem serwerowym i nie jest potrzebny, dopóki nie ma Storage albo administracyjnego API Auth;
-- integracje z operatorem płatności i dostawcą e-mail, jeszcze niepodłączone.
+- adapter HTTP Przelewy24 w `apps/api/src/p24` (konfiguracja, podpisy SHA-384 i klient REST); nie jest podłączony do checkoutu, webhooków ani zamówień; dostawca e-mail nadal niepodłączony.
 
 ### Supabase
 - PostgreSQL jako główna baza danych;
