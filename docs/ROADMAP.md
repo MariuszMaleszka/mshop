@@ -5,7 +5,7 @@ Nie oznaczaj zadania jako DONE bez spełnienia kryteriów akceptacji.
 
 ## Phase 0 — Decyzje i przygotowanie
 - [x] Zakup gościnny jest dozwolony. Historia konta obejmuje zamówienia złożone po zalogowaniu.
-- [x] Wybrać operatora płatności online MVP: Przelewy24. Stripe nie wchodzi do tej wersji. Checkout nie zależy od API operatora.
+- [x] Wybrać operatora płatności online MVP: Przelewy24. Stripe nie wchodzi do tej wersji. Sandboxowy checkout woła rejestrację po commicie. Produkcyjny checkout online pozostaje wyłączony.
 - [ ] Podłączyć środowisko testowe Przelewy24.
 - [x] Zatwierdzić model cen, waluty i VAT dla schematu (`docs/DATABASE.md`).
 - [ ] Potwierdzić dokumenty sprzedaży, moment obowiązku podatkowego i retencję danych.
@@ -30,7 +30,7 @@ Acceptance:
 - brak sekretów w repo.
 
 ## Phase 2 — Database foundation — DONE
-Dziesięć migracji modelu jest w repozytorium i na lokalnej bazie. API checkoutu, webhooków i płatności nie jest rozpoczęte.
+Migracje modelu są w repozytorium. API checkoutu, webhooka i płatności sandboxowych jest rozpoczęte. Produkcyjny checkout online pozostaje wyłączony.
 
 - [x] Dodać `profiles`, `user_roles` (wyłącznie rola `admin`) i `shop_profile` z jednym wierszem `seller_tax_status = unknown`.
 - [x] Dodać `customers`. `user_id` może być puste. Zgodny e-mail nie przypina zamówień gościa.
@@ -108,7 +108,7 @@ Acceptance:
 - pliki mają prawidłowe uprawnienia.
 
 ## Phase 6 — Cart & checkout
-Ciasteczko sesji gościa, API koszyka gościa, API koszyka konta i jawne łączenie koszyków są ukończone. Schemat snapshotu sprzedawcy, stawek VAT i rezerwacji stanu jest w bazie. Endpoint checkoutu nie istnieje. Checkout pozostaje zablokowany przy `seller_tax_status = unknown` i nie startuje sprzedaży, dopóki dane sprzedawcy nie zostaną świadomie uzupełnione. Tymczasowa precyzja VAT jest opisana w `docs/DATABASE.md`. Agregacja i zaokrąglanie VAT na dokumentach mają status `OPEN — ACCOUNTANT CONFIRMATION REQUIRED` i nie są warunkiem zapisu tej decyzji.
+Ciasteczko sesji gościa, API koszyka gościa, API koszyka konta i jawne łączenie koszyków są ukończone. Checkout API jest rozpoczęty. Zamówienie gotówkowe powstaje bez operatora online. Checkout online działa tylko w sandboxie i po commicie woła rejestrację Przelewy24. Produkcyjny checkout online pozostaje wyłączony. Frontend sklepu nadal nie woła checkoutu. Schemat snapshotu sprzedawcy, stawek VAT i rezerwacji stanu jest w bazie. Checkout pozostaje zablokowany przy `seller_tax_status = unknown` i nie startuje sprzedaży, dopóki dane sprzedawcy nie zostaną świadomie uzupełnione. Tymczasowa precyzja VAT jest opisana w `docs/DATABASE.md`. Agregacja i zaokrąglanie VAT na dokumentach mają status `OPEN — ACCOUNTANT CONFIRMATION REQUIRED` i nie są warunkiem zapisu tej decyzji.
 
 - [x] Ustawiać ciasteczko `shop_guest_session` i liczyć skrót SHA-256. Wiersz `carts` powstaje przy pierwszej pozycji gościa.
 - [x] Koszyk gościa identyfikowany ciasteczkiem `httpOnly`; w bazie tylko skrót sekretu.
@@ -116,11 +116,11 @@ Ciasteczko sesji gościa, API koszyka gościa, API koszyka konta i jawne łącze
 - [x] Połączenie koszyka gościa z koszykiem konta w API. `POST /api/v1/cart/merge` jest zaimplementowane. Sam token nie łączy koszyków.
 - [ ] Wywołanie `POST /api/v1/cart/merge` z `apps/web` po zalogowaniu.
 - [x] Dodawanie, usuwanie i zmiana ilości w koszyku gościa i w koszyku konta.
-- [ ] Ponowna walidacja kwoty, dostępności i zgodności waluty.
-- [ ] Checkout zablokowany przy `seller_tax_status = unknown`.
-- [ ] Snapshot danych klienta, katalogu podatkowego i podatku zastosowanego.
-- [ ] Sumy `net_amount`, `tax_amount` i `gross_amount`.
-- [ ] Idempotency-Key.
+- [x] Ponowna walidacja kwoty, dostępności i zgodności waluty.
+- [x] Checkout zablokowany przy `seller_tax_status = unknown`.
+- [x] Snapshot danych klienta, katalogu podatkowego i podatku zastosowanego.
+- [x] Sumy `net_amount`, `tax_amount` i `gross_amount`.
+- [x] Idempotency-Key.
 
 Acceptance:
 - nie można zmienić ceny, podatku ani waluty przez payload frontendu.
@@ -129,13 +129,15 @@ Acceptance:
 - przy statusie sprzedawcy `unknown` zamówienie nie powstaje.
 
 ## Phase 7 — Payments
-- [ ] Integracja operatora w trybie sandbox.
-- [ ] Utworzenie transakcji.
-- [ ] Weryfikacja webhooka.
-- [ ] Idempotencja webhooków.
-- [ ] Zgodność kwoty i waluty.
-- [ ] Ręczne potwierdzenie gotówki.
-- [ ] Obsługa nieudanej płatności.
+Checkout gotówkowy zapisuje zamówienie bez operatora online. Checkout online rejestruje transakcję sandboxową po commicie zamówienia. Produkcyjny checkout online pozostaje wyłączony. Webhook i `transaction/verify` są podłączone. Nierozstrzygnięte zostają host przekierowania sandboxu, lista definitywnych odmów weryfikacji oraz automatyczne odzyskanie `unknown` i `verification_requested`.
+
+- [x] Integracja operatora w trybie sandbox, bez produkcyjnego uruchomienia.
+- [x] Utworzenie transakcji po commicie zamówienia.
+- [x] Weryfikacja webhooka podpisem i `transaction/verify`.
+- [x] Idempotencja webhooków przez blokadę sesyjną i stan płatności, bez drugiego `verifyTransaction`.
+- [x] Zgodność kwoty i waluty.
+- [ ] Ręczne potwierdzenie gotówki. Nie dotyczy płatności Przelewy24.
+- [ ] Obsługa nieudanej płatności. Status inny niż dokładne `success` jest nierozstrzygnięty.
 - [ ] Zwrot, jeśli wspierany przez operatora.
 
 Acceptance:

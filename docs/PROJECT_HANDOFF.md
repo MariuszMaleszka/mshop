@@ -1,7 +1,7 @@
 # Punkt kontrolny projektu – sklep internetowy
 
-**Stan na:** 18 listopada 2026, po Step 12C.4  
-**Status bieżący:** Koszyk gościa, koszyk konta, blokady i `POST /api/v1/cart/merge` są na `main` (`43e6e21`). Schemat sprzedawcy, snapshotu zamówienia, stawek VAT i rezerwacji magazynowych jest w czterech migracjach i na lokalnej bazie. API checkoutu, worker, płatności i webhooki nie są rozpoczęte.
+**Stan na:** 19 listopada 2026, po Step 12E.14  
+**Status bieżący:** Checkout gotówkowy i sandboxowy checkout online są na `main` (`315c438`). Rejestracja Przelewy24 następuje po commicie zamówienia. Webhook jest podłączony i potwierdza płatność przez `transaction/verify`. Produkcyjny checkout online pozostaje wyłączony. Rezerwacje online wygasają po 15 minutach od utworzenia zamówienia i spóźniona płatność ich nie przywraca. Ręczna rekonsyliacja jest w `docs/P24_RECONCILIATION.md`. Storefront nadal nie woła checkoutu.
 
 > Ten plik jest krótkim punktem wznowienia pracy dla Cursor i ChatGPT. Nie zastępuje dokumentacji technicznej projektu (`ARCHITECTURE.md`, `API.md`, `ROADMAP.md`) ani raportów z wykonania. W razie rozbieżności najpierw sprawdź aktualny kod i właściwą dokumentację projektu. Nie zakładaj, że opis w tym pliku jest nowszy niż repozytorium.
 
@@ -71,14 +71,13 @@ Przed rozpoczęciem kolejnego zadania:
 - Historia zamówień konta obejmuje wyłącznie zamówienia przypisane przez `orders.user_id`. Zgodność adresu e-mail nie powoduje automatycznego przejęcia zamówienia gościa.
 - Zamówienie przechowuje snapshot produktu i danych rozliczeniowych.
 - Status płatności i realizacji zamówienia są rozdzielone.
-- Webhook operatora płatności jest źródłem prawdy o płatności online; wymaga weryfikacji podpisu, kwoty, waluty, zamówienia i idempotencji.
-- Operatorem płatności online w MVP jest Przelewy24. Stripe nie wchodzi do tej wersji. Zamówienie i checkout nie wołają API operatora; późniejsza integracja ma być adapterem, bez systemu wielu operatorów na zapas.
-- Checkout, płatności i webhooki nie są jeszcze implementowane.
+- Webhook operatora płatności jest źródłem prawdy o płatności online. Wymaga podpisu, kwoty, waluty i zgodności zamówienia. Powrót przeglądarki płatności nie potwierdza. `verification_requested` powstaje przed HTTP, a `verification_accepted` razem z `paid` tylko przy dokładnym statusie `success`. Inny status zostaje nierozstrzygnięty i nie zapisuje `verification_declined`. Drugiego `verifyTransaction` nie ma.
+- Operatorem płatności online w MVP jest Przelewy24. Stripe nie wchodzi do tej wersji. Checkout online działa tylko w sandboxie i woła rejestrację po commicie. Produkcyjny checkout online pozostaje wyłączony. Integracja zostaje jednym adapterem, bez systemu wielu operatorów na zapas.
 - MVP nie obejmuje wariantów produktów, wysyłki, rezerwacji terminów, kuponów, zaawansowanego magazynu ani fakturowania. Tabela `inventory_reservations` jest schematem rezerwacji stanu przy checkoutcie, nie rezerwacją terminów.
 
 ## 5. Baza danych – Phase 2
 
-Phase 2 ma dziesięć migracji zastosowanych na lokalnym PostgreSQL 17.12 (`127.0.0.1:54322`). Supabase CLI 3.2.0 jest zależnością developerską katalogu głównego. Nowe migracje nanosi się przez `pnpm exec supabase migration up`. Nie używać `db reset`, `db push` ani zdalnego projektu. W `migration list` pole historii przy celu lokalnym oznacza tę bazę, nie hostowany Supabase.
+Phase 2 ma migracje w repozytorium, łącznie z inicjalizacją płatności Przelewy24. Lokalna baza to PostgreSQL 17.12 (`127.0.0.1:54322`). Supabase CLI 3.2.0 jest zależnością developerską katalogu głównego. Nowe migracje nanosi się przez `pnpm exec supabase migration up`. Nie używać `db reset`, `db push` ani zdalnego projektu. W `migration list` pole historii przy celu lokalnym oznacza tę bazę, nie hostowany Supabase.
 
 1. `20261117140000_identity_and_shop_profile.sql`
 2. `20261117150000_catalog_categories_and_products.sql`
@@ -90,6 +89,7 @@ Phase 2 ma dziesięć migracji zastosowanych na lokalnym PostgreSQL 17.12 (`127.
 8. `20261118100100_order_seller_snapshot.sql`
 9. `20261118100200_standard_vat_rates.sql`
 10. `20261118100300_inventory_reservations.sql`
+11. `20261119120000_payment_initialization.sql`
 
 Istotne tabele: `profiles`, `user_roles`, `customers`, `shop_profile`, `categories`, `products`, `carts`, `cart_items`, `orders`, `order_items`, `order_status_history`, `payments`, `payment_events`, `idempotency_keys`, `inventory_reservations`.
 
@@ -104,7 +104,7 @@ Nie dodawaj migracji ani nie zmieniaj RLS bez jawnego zakresu i akceptacji użyt
 - `standard` w produkcie, snapshocie katalogowym i snapshocie zastosowanym dopuszcza tylko `23.00`, `8.00` i `5.00`, z jawnym `IS NOT NULL`. `zero_rated` to `0.00`. `exempt` i `not_subject` mają stawkę `NULL`.
 - Przy sprzedawcy zwolnionym z VAT pozycja zamówienia ma mieć status `exempt` i `vat_rate = NULL`. Snapshot katalogowy zostaje stawką produktu.
 - Zamówienie ma snapshot nazwy, NIP i adresu sprzedawcy. Kolumny są `NOT NULL` i doszły przy pustej tabeli `orders`. Nie ma klucza obcego do `shop_profile`.
-- Baza nie liczy VAT. Tymczasowa polityka techniczna, niezatwierdzona księgowo: cena katalogowa jest brutto i ma dokładność dwóch miejsc po przecinku, w bazie jako grosze. VAT od stawki procentowej liczy się „w stu”: brutto × stawka / (100 + stawka), bez zaokrąglania wyników pośrednich. VAT wykazywany w dokumentach zaokrągla się do grosza metodą half-up, a netto jest różnicą brutto i tego VAT. Arytmetyka ma być dziesiętna albo całkowita, nie zwykłym `Number` JavaScriptu. Kalkulatora jeszcze nie ma.
+- Baza nie liczy VAT. Tymczasowa polityka techniczna, niezatwierdzona księgowo: cena katalogowa jest brutto i ma dokładność dwóch miejsc po przecinku, w bazie jako grosze. VAT od stawki procentowej liczy się „w stu”: brutto × stawka / (100 + stawka), bez zaokrąglania wyników pośrednich. VAT wykazywany w dokumentach zaokrągla się do grosza metodą half-up, a netto jest różnicą brutto i tego VAT. Arytmetyka ma być dziesiętna albo całkowita, nie zwykłym `Number` JavaScriptu. Kalkulator jest w `apps/api/src/order-amounts/calculate.js` i liczy na `BigInt`. Obsługuje strategie `per_line` i `per_rate`. To nie jest zatwierdzona produkcyjna polityka VAT dla sprzedawcy zarejestrowanego jako podatnik VAT. Sposób rozliczania VAT nadal wymaga potwierdzenia księgowego.
 - Ustalono: `line_gross = unit_gross * quantity`; `line_gross = line_net + line_tax`; kwoty pozostają integerami.
 - `inventory_reservations`: jedna rezerwacja na pozycję. Aktywna wymaga produktu. Aktywna `online` wymaga `expires_at`, aktywna `cash` wymaga pustego `expires_at`. Metoda jest kopią `orders.payment_method` i jest spięta kluczem `(order_id, payment_method)`.
 - PostgreSQL 17.12 nie przyjmuje `ON UPDATE SET NULL` z listą kolumn. Złożony klucz rezerwacji używa `ON UPDATE CASCADE` i `ON DELETE SET NULL (product_id)`. Usunięcie produktu przy rezerwacji terminalnej zeruje `product_id` i zostawia `order_item_id`. Przy statusie `active` ten zapis odrzuca check i całe usunięcie produktu się wycofuje.
@@ -133,7 +133,8 @@ Zakończona: `apps/api` (Express 5, health endpoint), `apps/web` (Nuxt 4.6.4), `
 - Step 10C – audyt koszyka konta i gościa: wykonany. Brak ustaleń krytycznych, wysokich i średnich. Krok można zamknąć.
 - Step 11B.1 – wspólny protokół blokad doradczych dla sześciu operacji modyfikujących koszyk: ukończony. Jest na `main` w `43e6e21`.
 - Step 11B.2 – `POST /api/v1/cart/merge`: ukończony. Jest na `main` w `43e6e21`. Frontend jeszcze go nie wywołuje.
-- Step 12C.1–12C.4 – tożsamość sprzedawcy, snapshot zamówienia, stawki VAT 23/8/5 i `inventory_reservations`: migracje są w repozytorium i zastosowane na lokalnej bazie. Express, worker i webhooki nadal ich nie używają.
+- Step 12C.1–12C.4 – tożsamość sprzedawcy, snapshot zamówienia, stawki VAT 23/8/5 i `inventory_reservations`: migracje są w repozytorium. Checkout, worker i webhook ich używają.
+- Step 12E – sandboxowy checkout online, worker wygaszania i webhook Przelewy24 są na `main` (`315c438`). Produkcyjny checkout online pozostaje wyłączony.
 
 ### Step 8 – istniejąca sesja gościa
 
@@ -179,7 +180,7 @@ Wybór właściciela:
 
 Ostatnia weryfikacja po migracji rezerwacji: `pnpm test` — 183 testy, 0 niepowodzeń, 0 pominiętych; `pnpm lint` i `pnpm format:check` czyste. Testy integracyjne koszyka w `apps/api/test/cart.integration.test.js` obejmują wyścigi oparte o `pg_locks`.
 
-**Następna czynność:** czekać na decyzję użytkownika. Nie zaczynać CORS, `__Host-`, checkoutu, zamówień, płatności, workera rezerwacji ani webhooków bez osobnej zgody. Nie podłączać scalania we frontendzie bez osobnej zgody. Nie powtarzać migracji 12C.
+**Następna czynność:** czekać na decyzję użytkownika. Checkout, worker i webhook P24 są już na `main`. Nie implementować ich od nowa. Nie włączać produkcyjnego checkoutu online. Nie podłączać scalania we frontendzie bez osobnej zgody. Nie powtarzać migracji.
 
 Świadomie odłożone: prefiks `__Host-`, credentialed CORS, `SameSite=Lax` przy osobnych domenach, redakcja gołego skrótu bez nazwy ciasteczka.
 
@@ -190,7 +191,7 @@ Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` nie 
 ### Późniejsze, osobne etapy
 
 1. Integracja frontendu i obsługa CORS/cookie credentials – po ustaleniu domen i sposobu wdrożenia. Frontend nie wywołuje jeszcze `POST /api/v1/cart/merge`.
-2. Checkout, zamówienia, płatności, worker rezerwacji i webhooki – API nadal niezaimplementowane. Schemat sprzedawcy, stawek i rezerwacji jest gotowy. Operator online MVP to Przelewy24, ale checkout nadal blokuje `seller_tax_status = unknown`, a dane sprzedawcy trzeba uzupełnić świadomie przed sprzedażą. Przed dokumentami sprzedaży zostaje otwarte potwierdzenie księgowe agregacji VAT.
+2. Dokończenie płatności online poza sandboxem. API checkoutu, workera i webhooka jest na `main`. Checkout online działa tylko w sandboxie, a host przekierowania sandboxu nie jest ustalony. Stany `unknown` oraz `verification_requested` bez `verification_accepted` nie odzyskują się same; procedura jest w `docs/P24_RECONCILIATION.md`. Checkout nadal blokuje `seller_tax_status = unknown`. Przed dokumentami sprzedaży zostaje otwarte potwierdzenie księgowe agregacji VAT.
 
 ## 9. Otwarte decyzje na przyszłość
 
@@ -211,6 +212,6 @@ Nie wykonuj samodzielnie żadnych zmian tylko dlatego, że przeczytałeś ten pl
 
 Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` są ukończone na `main`. Cztery migracje 12C też są ukończone. Nie traktuj ich jako pracy w toku i nie implementuj ich od nowa.
 
-Przy wznowieniu sprawdź `pnpm exec supabase migration list`. Ostatni wspólny znacznik pliku i lokalnej bazy ma być `20261118100300`. Szczegóły kolumn są w `docs/DATABASE.md`.
+Przy wznowieniu sprawdź `pnpm exec supabase migration list`. W repozytorium po rezerwacjach jest też `20261119120000_payment_initialization.sql`. Szczegóły kolumn są w `docs/DATABASE.md`.
 
-Następny etap wybiera użytkownik. Bez osobnej zgody nie zaczynaj logowania, checkoutu, zamówień, płatności, workera rezerwacji, webhooków, frontendu ani CORS.
+Następny etap wybiera użytkownik. Bez osobnej zgody nie włączaj produkcyjnego checkoutu online, nie powtarzaj `transaction/register` ani `transaction/verify` i nie zaczynaj frontendu ani CORS.

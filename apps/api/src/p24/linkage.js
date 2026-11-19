@@ -121,8 +121,6 @@ const UNCHANGED_STATUSES = new Set([
   'cancelled',
 ])
 
-const DECLINED_STATUS = /^[A-Za-z0-9_-]{1,32}$/
-
 export async function handlePaymentNotification(
   database,
   notification,
@@ -209,6 +207,7 @@ async function verifyUnderLock(session, notification, options) {
   }
 
   // The adapter returns only after HTTP 200 and responseCode 0.
+  // A definitive refusal list is not implemented: the OpenAPI spec names only "success".
   const verified = await options.verifyTransaction({
     sessionId: notification.sessionId,
     orderId: notification.orderId,
@@ -222,18 +221,6 @@ async function verifyUnderLock(session, notification, options) {
     return session.transaction((tx) =>
       finalizePayment(tx, notification, options),
     )
-  }
-
-  if (
-    typeof verified?.status === 'string' &&
-    DECLINED_STATUS.test(verified.status)
-  ) {
-    await session.transaction((tx) =>
-      insertEvent(tx, notification.sessionId, 'verification_declined', {
-        status: verified.status,
-      }),
-    )
-    return { status: 'unchanged' }
   }
 
   throw unavailable('p24.notification_verify_failed')

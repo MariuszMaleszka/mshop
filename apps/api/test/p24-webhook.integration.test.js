@@ -475,9 +475,12 @@ describe('Przelewy24 notification linkage', { concurrency: 1, skip }, () => {
     const requested = await createOrder()
     const accepted = await createOrder()
 
+    const declined = await createOrder()
+
     for (const [paymentId, eventType] of [
       [requested.paymentId, 'verification_requested'],
       [accepted.paymentId, 'verification_accepted'],
+      [declined.paymentId, 'verification_declined'],
     ]) {
       await database.query(
         `INSERT INTO public.payment_events (
@@ -557,26 +560,54 @@ describe('Przelewy24 notification linkage', { concurrency: 1, skip }, () => {
     assert.equal(externalCalls, 0)
   })
 
-  it('records a declined verification without changing payment status', async () => {
-    const order = await createOrder()
-    hooks.impl = () => ({ status: 'rejected' })
-    const result = await post(bodyFor(order.paymentId))
-    const stored = await events(order.paymentId)
+  it('leaves every non-success verify status unresolved', async () => {
+    const statuses = [
+      'rejected',
+      'Success',
+      'SUCCESS',
+      'pending',
+      'not a token',
+      null,
+      1,
+    ]
 
-    assert.equal(result.status, 202)
-    assert.equal(result.payload.data.status, 'unchanged')
-    assert.equal(JSON.stringify(result.payload).includes('rejected'), false)
+    for (const status of statuses) {
+      const order = await createOrder()
+      hooks.impl = () => ({ status })
+      const result = await post(bodyFor(order.paymentId))
+      const row = await snapshot(order.paymentId)
+
+      assert.equal(result.status, 503)
+      assert.equal(result.payload.error.code, 'SERVICE_UNAVAILABLE')
+      assert.equal(JSON.stringify(result.payload).includes('rejected'), false)
+      assert.equal(JSON.stringify(result.payload).includes('SUCCESS'), false)
+      assert.equal(row.status, 'pending')
+      assert.equal(row.payment_status, 'pending')
+      assert.equal(row.provider_transaction_id, null)
+      assert.equal(row.paid_at_set, 'false')
+      assert.equal(row.history, '0')
+      assert.deepEqual(
+        (await events(order.paymentId)).map((event) => event.event_type),
+        ['verification_requested'],
+      )
+
+      const replay = await post(bodyFor(order.paymentId))
+      assert.equal(replay.status, 202)
+      assert.equal(replay.payload.data.status, 'unchanged')
+      assert.equal(verifyCalls.length, 1)
+      assert.equal((await snapshot(order.paymentId)).status, 'pending')
+      verifyCalls.length = 0
+    }
+
+    hooks.impl = () => ({})
+    const missing = await createOrder()
+    const missingResult = await post(bodyFor(missing.paymentId))
+    assert.equal(missingResult.status, 503)
     assert.deepEqual(
-      stored.map((event) => event.event_type),
-      ['verification_requested', 'verification_declined'],
+      (await events(missing.paymentId)).map((event) => event.event_type),
+      ['verification_requested'],
     )
-    assert.equal(stored[1].provider_event_id, null)
-    assert.deepEqual(stored[1].payload, { status: 'rejected' })
-    assert.equal((await snapshot(order.paymentId)).status, 'pending')
-
-    const replay = await post(bodyFor(order.paymentId))
-    assert.equal(replay.payload.data.status, 'unchanged')
-    assert.equal(verifyCalls.length, 1)
+    assert.equal(externalCalls, 0)
   })
 
   it('rolls back verification_requested when commit does not happen', async () => {
