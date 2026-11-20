@@ -336,6 +336,12 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
     assert.equal(stored.expires_at, null)
     assert.equal(stored.cart_status, 'converted')
     assert.equal(stored.customer_user_id, null)
+    assert.equal(stored.user_id, null)
+    assert.equal(stored.order_session_id, session.hash)
+    assert.notEqual(stored.order_session_id, session.raw)
+    assert.equal(stored.session_id, session.hash)
+    assert.equal(JSON.stringify(first.payload).includes(session.raw), false)
+    assert.equal(first.payload.data.session_id, undefined)
     assert.equal(stored.billing_snapshot.street, 'Lipowa')
     assert.equal(stored.seller_business_name_snapshot, 'Checkout Test')
     assert.equal(stored.provider, null)
@@ -414,6 +420,8 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
       assert.equal(result.payload.error.code, 'SERVICE_UNAVAILABLE')
       assert.deepEqual(afterCounts, before)
       assert.equal(await cartStatus(session.hash), 'active')
+      assert.equal(await ordersForSession(session.hash), 0)
+      assert.equal(await rawSessionStored(session.raw), 0)
     } finally {
       database.withTransaction = placeTransaction
     }
@@ -502,6 +510,12 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
     assert.equal(exact.status, 201)
     assert.equal(short.status, 409)
     assert.equal(short.payload.error.code, 'INSUFFICIENT_STOCK')
+    const heldOrder = await orderRow(held.payload.data.id)
+    const exactOrder = await orderRow(exact.payload.data.id)
+    assert.equal(heldOrder.order_session_id, first.hash)
+    assert.equal(exactOrder.order_session_id, second.hash)
+    assert.notEqual(heldOrder.order_session_id, second.hash)
+    assert.notEqual(exactOrder.order_session_id, first.hash)
   })
 
   it('accepts registered zero-tax products and keeps an account customer unchanged', async () => {
@@ -532,6 +546,7 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
     assert.equal(result.status, 201)
     assert.equal(stored.tax_status_snapshot, 'zero_rated')
     assert.equal(stored.user_id, userId)
+    assert.equal(stored.order_session_id, null)
     assert.equal(stored.customer_user_id, userId)
     assert.equal(stored.customer_email, session.email)
     assert.equal(
@@ -542,6 +557,60 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
       BigInt(stored.gross_amount),
       BigInt(stored.net_amount) + BigInt(stored.tax_amount),
     )
+  })
+
+  it('rejects a combined owner and keeps an order without one', async () => {
+    await setSeller('exempt')
+    const session = await guestCart({
+      taxStatus: 'exempt',
+      vatRate: null,
+      stock: 2,
+    })
+    const created = await checkout(session)
+    const orderId = created.payload.data.id
+    const userId = randomUUID()
+    userIds.push(userId)
+    await database.query('INSERT INTO auth.users (id) VALUES ($1)', [userId])
+
+    await assert.rejects(
+      () =>
+        database.query('UPDATE public.orders SET user_id = $2 WHERE id = $1', [
+          orderId,
+          userId,
+        ]),
+      (error) => error.code === '23514',
+    )
+    await assert.rejects(
+      () =>
+        database.query(
+          'UPDATE public.orders SET session_id = $2 WHERE id = $1',
+          [orderId, 'not-a-session-hash'],
+        ),
+      (error) => error.code === '23514',
+    )
+
+    await assert.rejects(
+      () =>
+        database.withTransaction(async (tx) => {
+          await tx.query(
+            'UPDATE public.orders SET user_id = NULL, session_id = NULL WHERE id = $1',
+            [orderId],
+          )
+          const cleared = await tx.query(
+            'SELECT user_id, session_id FROM public.orders WHERE id = $1',
+            [orderId],
+          )
+          assert.equal(cleared.rows[0].user_id, null)
+          assert.equal(cleared.rows[0].session_id, null)
+          throw new Error('rollback cleared owner')
+        }),
+      (error) => error.message === 'rollback cleared owner',
+    )
+
+    const stored = await orderRow(orderId)
+    assert.equal(stored.user_id, null)
+    assert.equal(stored.order_session_id, session.hash)
+    assert.equal(await rawSessionStored(session.raw), 0)
   })
 
   it('does not create data for online payment or an unknown seller', async () => {
@@ -736,6 +805,9 @@ describe('cash checkout', { concurrency: 1, skip }, () => {
     assert.equal(row.reservation_window, true)
     assert.equal(row.stock_quantity, 3)
     assert.equal(row.cart_status, 'converted')
+    assert.equal(row.order_session_id, session.hash)
+    assert.notEqual(row.order_session_id, session.raw)
+    assert.equal(text.includes(session.raw), false)
     assert.equal(row.response_status, 201)
     assert.equal(
       row.response_body.data.payment.initializationStatus,
@@ -1398,6 +1470,7 @@ async function orderRow(orderId) {
     `
       SELECT
         o.user_id,
+        btrim(o.session_id) AS order_session_id,
         o.customer_email,
         o.payment_method,
         o.payment_status,
@@ -1439,6 +1512,28 @@ async function orderRow(orderId) {
   )
 
   return result.rows[0]
+}
+
+async function ordersForSession(sessionHash) {
+  const result = await database.query(
+    'SELECT count(*)::int AS total FROM public.orders WHERE session_id = $1',
+    [sessionHash],
+  )
+  return result.rows[0].total
+}
+
+async function rawSessionStored(rawSessionId) {
+  const result = await database.query(
+    `
+      SELECT count(*)::int AS total
+      FROM public.orders
+      WHERE session_id::text = $1
+         OR customer_email = $1
+         OR billing_snapshot::text LIKE '%' || $1 || '%'
+    `,
+    [rawSessionId],
+  )
+  return result.rows[0].total
 }
 
 async function countOrders(email) {
@@ -1600,6 +1695,7 @@ async function onlineRow(orderId) {
     `
       SELECT
         o.id AS order_id,
+        btrim(o.session_id) AS order_session_id,
         o.payment_status,
         o.gross_amount::text AS gross_amount,
         p.id AS payment_id,

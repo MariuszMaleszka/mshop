@@ -147,11 +147,13 @@ const INSERT_ORDER_SQL = `
     gross_amount,
     payment_method,
     payment_status,
-    fulfillment_status
+    fulfillment_status,
+    session_id
   )
   VALUES (
     $1, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13,
-    $14, $15, $16, $17::bigint, $18::bigint, $19::bigint, 'cash', 'pending', 'new'
+    $14, $15, $16, $17::bigint, $18::bigint, $19::bigint, 'cash', 'pending', 'new',
+    $20::char(64)
   )
   RETURNING id, order_number, payment_status, fulfillment_status, payment_method,
     btrim(currency) AS currency, net_amount::text AS net_amount,
@@ -262,11 +264,13 @@ const INSERT_ONLINE_ORDER_SQL = `
     gross_amount,
     payment_method,
     payment_status,
-    fulfillment_status
+    fulfillment_status,
+    session_id
   )
   VALUES (
     $1, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13,
-    $14, $15, $16, $17::bigint, $18::bigint, $19::bigint, 'online', 'pending', 'new'
+    $14, $15, $16, $17::bigint, $18::bigint, $19::bigint, 'online', 'pending', 'new',
+    $20::char(64)
   )
   RETURNING id, order_number, payment_status, fulfillment_status, payment_method,
     btrim(currency) AS currency, net_amount::text AS net_amount,
@@ -470,6 +474,7 @@ async function createOnlineOrder(
     amounts.totals.net,
     amounts.totals.tax,
     amounts.totals.gross,
+    orderSessionId(owner),
   ])
   const created = order.rows[0]
   const orderItems = await insertItems(
@@ -725,6 +730,7 @@ async function insertOrder(tx, { customerId, owner, body, seller, amounts }) {
     amounts.totals.net,
     amounts.totals.tax,
     amounts.totals.gross,
+    orderSessionId(owner),
   ])
 
   return result.rows[0]
@@ -800,6 +806,10 @@ async function insertIdempotency(tx, input) {
     JSON.stringify(input.response),
     input.orderId,
   ])
+}
+
+function orderSessionId(owner) {
+  return owner.kind === 'guest' ? owner.key : null
 }
 
 function orderResponse(order) {

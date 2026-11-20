@@ -82,7 +82,12 @@ function applyCart(result) {
 <template>
   <main>
     <h1>Koszyk</h1>
-    <p><a href="/">Sklep</a></p>
+    <p>
+      <a href="/">Sklep</a>
+      <a v-if="cart && cart.items.length > 0" href="/checkout"
+        >Złóż zamówienie</a
+      >
+    </p>
     <p v-if="loading">Ładowanie koszyka.</p>
     <p v-if="errorMessage">
       {{ errorMessage }}

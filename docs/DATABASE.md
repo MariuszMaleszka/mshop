@@ -264,6 +264,7 @@ Sumy nagłówka równają się sumom pozycji. Sprawdza to transakcja checkoutu, 
 - `order_number text not null unique`
 - `customer_id uuid null references customers(id) on delete set null`
 - `user_id uuid null references auth.users(id) on delete set null`
+- `session_id char(64) null` — SHA-256 ciasteczka `shop_guest_session`, 64 znaki hex; nie surowy identyfikator
 - `customer_email text not null`
 - `customer_type text not null` — `individual` lub `company`
 - `billing_snapshot jsonb not null`
@@ -287,6 +288,8 @@ Sumy nagłówka równają się sumom pozycji. Sprawdza to transakcja checkoutu, 
 - `updated_at timestamptz not null`
 
 `gross_amount = net_amount + tax_amount`. Wszystkie trzy kwoty są nieujemne. `gross_amount` jest kwotą przekazywaną operatorowi płatności. Nie ma kolumny `orders.status`. Snapshot sprzedawcy nie ma klucza obcego do `shop_profile`. Kolumny dodano przy pustej tabeli `orders`, bez wartości domyślnych.
+
+Nowe zamówienie konta ma `user_id` i puste `session_id`. Nowe zamówienie gościa ma puste `user_id` i `session_id` równe skrótowi używanemu w koszyku. Check zabrania ustawienia obu pól naraz i nie wymaga żadnego z nich, więc istniejące wiersze bez właściciela pozostają bez zmian. Indeks `orders_session_id_created_at_idx` obejmuje tylko wiersze ze skrótem.
 
 Na `orders` są klucze unikalne obok `order_number`: `(id, currency)`, `(id, payment_method)` oraz `(id, payment_method, currency, gross_amount)`. Służą kluczom obcym pozycji, rezerwacji i płatności. Nie zastępują klucza głównego. `(id, payment_method)` jest celem klucza rezerwacji; `id` jest już unikalne, więc ten klucz nie odrzuca istniejących wierszy.
 
@@ -513,6 +516,7 @@ Zastosowane lokalnie, w tej kolejności:
 9. `20261118100200_standard_vat_rates.sql` — stawki `standard` 23, 8 i 5.
 10. `20261118100300_inventory_reservations.sql` — `inventory_reservations` oraz klucze `(id, product_id)` i `(id, payment_method)`.
 11. `20261119120000_payment_initialization.sql` — `payments.initialization_status` i `payments.redirect_token` dla Przelewy24.
+12. `20261120120000_order_guest_session.sql` — `orders.session_id` dla skrótu sesji gościa, bez uzupełniania starych wierszy.
 
 RLS i indeksy tych tabel powstały razem z nimi.
 
