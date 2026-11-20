@@ -1,9 +1,12 @@
 <script setup>
 import { onMounted, ref } from 'vue'
+import { notifyShopCartChanged } from '../components/shop/cart-count.js'
 import { useCart } from '../composables/use-cart.js'
 import { readList, useCatalog } from '../composables/use-catalog.js'
 import { useGuestSession } from '../composables/use-guest-session.js'
 import { formatAmount } from '../utils/money.js'
+
+definePageMeta({ layout: 'shop' })
 
 const catalog = useCatalog()
 const cart = useCart()
@@ -56,13 +59,13 @@ async function addProduct(product) {
   }
 
   notice.value = 'Dodano do koszyka.'
+  notifyShopCartChanged()
 }
 </script>
 
 <template>
   <main>
     <h1>Sklep</h1>
-    <p><a href="/cart">Koszyk</a></p>
     <p v-if="loading">Ładowanie katalogu.</p>
     <p v-if="errorMessage">
       {{ errorMessage }}

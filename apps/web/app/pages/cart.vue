@@ -1,7 +1,10 @@
 <script setup>
 import { onMounted, ref } from 'vue'
+import { notifyShopCartChanged } from '../components/shop/cart-count.js'
 import { readCart, useCart } from '../composables/use-cart.js'
 import { formatAmount } from '../utils/money.js'
+
+definePageMeta({ layout: 'shop' })
 
 const cartApi = useCart()
 const cart = ref(null)
@@ -76,17 +79,15 @@ function applyCart(result) {
   quantities.value = Object.fromEntries(
     (next?.items ?? []).map((item) => [item.id, String(item.quantity)]),
   )
+  notifyShopCartChanged()
 }
 </script>
 
 <template>
   <main>
     <h1>Koszyk</h1>
-    <p>
-      <a href="/">Sklep</a>
-      <a v-if="cart && cart.items.length > 0" href="/checkout"
-        >Złóż zamówienie</a
-      >
+    <p v-if="cart && cart.items.length > 0">
+      <a href="/checkout">Złóż zamówienie</a>
     </p>
     <p v-if="loading">Ładowanie koszyka.</p>
     <p v-if="errorMessage">

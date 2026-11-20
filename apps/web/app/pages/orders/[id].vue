@@ -7,6 +7,8 @@ import {
   useOrder,
 } from '../../composables/use-order.js'
 
+definePageMeta({ layout: 'shop' })
+
 const route = useRoute()
 const orders = useOrder()
 const order = ref(null)
@@ -55,7 +57,6 @@ function amount(value, currency) {
 <template>
   <main>
     <h1>Zamówienie</h1>
-    <p><a href="/">Sklep</a></p>
     <p v-if="loading">Ładowanie zamówienia.</p>
     <p v-if="errorMessage">
       {{ errorMessage }}

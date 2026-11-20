@@ -43,6 +43,7 @@ export default [
         useRuntimeConfig: 'readonly',
         useApi: 'readonly',
         useRoute: 'readonly',
+        definePageMeta: 'readonly',
       },
     },
     rules: {

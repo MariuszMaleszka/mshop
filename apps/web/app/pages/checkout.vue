@@ -7,6 +7,8 @@ import {
 } from '../composables/use-checkout.js'
 import { withGuestSession } from '../composables/use-guest-session.js'
 
+definePageMeta({ layout: 'shop' })
+
 const checkout = useCheckout()
 const api = useApi()
 const form = ref({
