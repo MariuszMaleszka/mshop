@@ -70,7 +70,9 @@ Dostępna baza:
 Niedostępna baza: HTTP 503 i kod `SERVICE_UNAVAILABLE`.
 
 ## Uwierzytelnianie
-Logowanie, rejestracja i odświeżanie sesji należą do Supabase Auth. Express sprawdza access token tylko na trasach, które dostaną middleware `requireAuth`. To middleware nie jest globalne.
+Logowanie, rejestracja i odświeżanie sesji należą dziś do Supabase Auth. Express sprawdza access token tylko na trasach, które dostaną middleware `requireAuth`. To middleware nie jest globalne. Express nie ma trasy hasła, odświeżenia ani wylogowania.
+
+Docelowa sesja jest opisana wyłącznie w `docs/AUTH-SESSION.md`. Nie jest zaimplementowana, wymaga osobnej zgody i nie zmienia poniższego kontraktu Bearer.
 
 Poprawny token udostępnia `req.auth.userId` równe claimowi `sub`. Sprawdzane są podpis, algorytm `ES256` albo `RS256`, issuer `{SUPABASE_URL}/auth/v1`, audience `authenticated`, `exp` i UUID w `sub`.
 

@@ -16,7 +16,7 @@ Aplikacja jest w JavaScript, bez TypeScriptu w kodzie źródłowym. Storefront m
 - konto klienta;
 - panel administracyjny pod `/admin`;
 - wyświetlanie danych pobieranych z API;
-- zarządzanie sesją Supabase Auth.
+- sesja konta według `docs/AUTH-SESSION.md`.
 
 ### `apps/api` — Express 5
 API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publiczny odczyt katalogu, koszyk gościa, koszyk konta, checkout gotówkowy, sandboxowy checkout online i `GET /api/v1/orders/:id`. Konto klienta i panel nadal są planowane.
@@ -41,8 +41,8 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publi
 
 ## 3. Zasady przepływu danych
 1. Nuxt komunikuje się z Express przez HTTPS/REST.
-2. Nuxt przekazuje access token Supabase w nagłówku `Authorization: Bearer <token>`.
-3. Express weryfikuje access token. Supabase Auth loguje użytkownika i wydaje JWT. Express nie przyjmuje haseł i nie używa `SUPABASE_SERVICE_ROLE_KEY` ani sekretu HMAC. Adres JWKS powstaje z `SUPABASE_URL`: `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. Jedna funkcja `createRemoteJWKSet` powstaje przy starcie procesu i nie pobiera kluczy, dopóki pierwsza chroniona trasa nie sprawdzi tokenu. Zestaw jest cache'owany przez 10 minut. Nieznany `kid` powoduje ponowne pobranie po 30 sekundach, więc rotacja klucza nie wymaga restartu. Dozwolone algorytmy to `ES256` i `RS256`. Brak nagłówka albo token odrzucony daje HTTP 401. Niedostępny JWKS daje HTTP 503, a nie 401. Middleware `requireAuth` nie obejmuje całego API. `GET /api/v1/health` i `GET /api/v1/health/ready` pozostają publiczne.
+2. Dziś trasy konta wymagają nagłówka `Authorization: Bearer`, a `useApi()` sam go nie dokłada. Docelowo przeglądarka nie przechowuje access tokenu. Serwer Nuxt ma dokładać Bearer do Expressa z sesji opisanej w `docs/AUTH-SESSION.md`. Tego BFF jeszcze nie ma. Gość nadal używa ciasteczka `shop_guest_session` wprost wobec Expressa.
+3. Express weryfikuje access token. Supabase Auth loguje użytkownika i wydaje JWT. Obecny proces nie przyjmuje haseł i nie używa `SUPABASE_SERVICE_ROLE_KEY` ani sekretu HMAC. Docelowe przyjęcie hasła od Nuxt jest opisane wyłącznie w `docs/AUTH-SESSION.md`, nie jest zaimplementowane i wymaga osobnej zgody. Adres JWKS powstaje z `SUPABASE_URL`: `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. Jedna funkcja `createRemoteJWKSet` powstaje przy starcie procesu i nie pobiera kluczy, dopóki pierwsza chroniona trasa nie sprawdzi tokenu. Zestaw jest cache'owany przez 10 minut. Nieznany `kid` powoduje ponowne pobranie po 30 sekundach, więc rotacja klucza nie wymaga restartu. Dozwolone algorytmy to `ES256` i `RS256`. Brak nagłówka albo token odrzucony daje HTTP 401. Niedostępny JWKS daje HTTP 503, a nie 401. Middleware `requireAuth` nie obejmuje całego API. `GET /api/v1/health` i `GET /api/v1/health/ready` pozostają publiczne.
 4. Express sprawdza uprawnienia do konkretnej operacji i zasobu. `requireAdmin` wykonuje `SELECT 1 FROM public.user_roles WHERE user_id = $1 AND role = 'admin' LIMIT 1`. Brak wcześniejszego `req.auth.userId` daje HTTP 401. Brak wiersza daje HTTP 403. Błąd zapytania daje HTTP 503 i nie jest traktowany jako brak roli. Claim roli w JWT nie jest używany. Middleware nie jest globalne. Koszyk konta sprawdza właściciela w SQL przez `req.auth.userId`. `GET /api/v1/orders/:id` sprawdza właściciela w SQL: konto po `orders.user_id`, gość po `orders.session_id`. Lista zamówień klienta pozostaje przy przyszłym endpoincie. Administrator czyta `GET /api/v1/admin/orders`.
 5. Operacje biznesowe są wykonywane w backendzie.
 6. Backend zapisuje dane w PostgreSQL.
@@ -125,7 +125,7 @@ Panel jest częścią aplikacji Nuxt i ma layout `admin`, osobny od layoutu skle
 - `/admin/payments`
 - `/admin/settings`
 
-Ochrona middleware w Nuxt służy UX, ale nie jest zabezpieczeniem. Każdy endpoint administracyjny musi ponownie sprawdzić rolę po stronie Express.
+Ochrona middleware w Nuxt służy UX, ale nie jest zabezpieczeniem. Każdy endpoint administracyjny musi ponownie sprawdzić rolę po stronie Express. Szczegóły sesji, czasy, sprzątanie i test wyścigu są tylko w `docs/AUTH-SESSION.md`. Ten mechanizm nie jest zaimplementowany i wymaga osobnej zgody przed pracami. Kontrakt `requireAuth` i `requireAdmin` zostaje.
 
 ## 8. Rozszerzalność
 Projektuj katalog tak, aby `product_type` rozróżniał:
@@ -150,7 +150,8 @@ Przed implementacją produkcyjną nadal należy zatwierdzić:
 - końcowe potwierdzenie hosta `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}` podczas testu sandbox; specyfikacja REST 1.0.18 podaje bezpośrednio tylko adres produkcyjny; produkcyjny checkout online pozostaje wyłączony mimo podłączonego webhooka; ręczna rekonsyliacja stanów `unknown` oraz `verification_requested` bez `verification_accepted` jest w `docs/P24_RECONCILIATION.md`;
 - sposób realizacji usług i produktów cyfrowych;
 - dokumenty sprzedaży, moment obowiązku podatkowego i retencję danych; pełna lista kwestii odłożonych do konsultacji z księgowym jest w `docs/PROJECT_HANDOFF.md`; nie blokują dalszych prac technicznych, blokują ostateczne uruchomienie sprzedaży w zakresie, którego dotyczą, i implementacja ich nie rozstrzyga;
-- hosting API, frontendu i Supabase.
+- hosting API, frontendu i Supabase oraz adresy proxy, które wolno uznać przy liczniku logowania; bez tej listy produkcyjne logowanie za proxy nie rusza, a `X-Forwarded-For` od klienta nie jest adresem;
+- czas życia access tokenu w projekcie Supabase. Repozytorium go nie ustawia, a skopiowany token działa do `exp`, dopóki Express przyjmuje Bearer z internetu.
 
 ## 10. Integracje zewnętrzne
 
