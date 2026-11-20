@@ -129,14 +129,14 @@ Acceptance:
 - przy statusie sprzedawcy `unknown` zamówienie nie powstaje.
 
 ## Phase 7 — Payments
-Checkout gotówkowy zapisuje zamówienie bez operatora online. Płatność zostaje `pending`, rezerwacja `active` bez terminu wygaśnięcia, a potwierdzenie odbioru gotówki i domknięcie tej rezerwacji nie są zaimplementowane. Checkout online rejestruje transakcję sandboxową po commicie zamówienia. Produkcyjny checkout online pozostaje wyłączony. Webhook i `transaction/verify` są podłączone. Zapisany token sandboxu wraca jako stały adres panelu. Końcowe potwierdzenie tego hosta podczas testu sandbox pozostaje otwarte, podobnie jak lista definitywnych odmów weryfikacji oraz automatyczne odzyskanie `unknown` i `verification_requested`. Powrót przeglądarki nie potwierdza płatności. `paid` po wygaśnięciu rezerwacji nie przywraca stanu ani nie ustawia realizacji.
+Checkout gotówkowy zapisuje zamówienie bez operatora online. Płatność zostaje `pending`, rezerwacja `active` bez terminu wygaśnięcia, a odbiór gotówki potwierdza `POST /api/v1/admin/orders/:id/mark-paid`: zmniejsza stan, oznacza rezerwację `consumed` i zostawia realizację `new`. Checkout online rejestruje transakcję sandboxową po commicie zamówienia. Produkcyjny checkout online pozostaje wyłączony. Webhook i `transaction/verify` są podłączone. Zapisany token sandboxu wraca jako stały adres panelu. Końcowe potwierdzenie tego hosta podczas testu sandbox pozostaje otwarte, podobnie jak lista definitywnych odmów weryfikacji oraz automatyczne odzyskanie `unknown` i `verification_requested`. Powrót przeglądarki nie potwierdza płatności. `paid` po wygaśnięciu rezerwacji nie przywraca stanu ani nie ustawia realizacji.
 
 - [x] Integracja operatora w trybie sandbox, bez produkcyjnego uruchomienia.
 - [x] Utworzenie transakcji po commicie zamówienia.
 - [x] Weryfikacja webhooka podpisem i `transaction/verify`.
 - [x] Idempotencja webhooków przez blokadę sesyjną i stan płatności, bez drugiego `verifyTransaction`.
 - [x] Zgodność kwoty i waluty.
-- [ ] Ręczne potwierdzenie gotówki. Nie dotyczy płatności Przelewy24.
+- [x] Ręczne potwierdzenie gotówki przez administratora. Nie dotyczy płatności Przelewy24. Realizacja zostaje `new`. Anulowanie nieopłaconej gotówki robi `POST /api/v1/admin/orders/:id/cancel` i nie zmniejsza stanu. Zwrot nadal nie jest zaimplementowany.
 - [ ] Obsługa nieudanej płatności. Status inny niż dokładne `success` jest nierozstrzygnięty.
 - [ ] Zwrot, jeśli wspierany przez operatora.
 
@@ -148,7 +148,9 @@ Acceptance:
 ## Phase 8 — Orders & admin
 - [ ] Lista zamówień klienta.
 - [x] Szczegóły jednego zamówienia: `GET /api/v1/orders/:id` i strona `/orders/{id}`. Odczyt nie oznacza zamówienia jako opłaconego.
-- [ ] Admin lista i szczegóły.
+- [x] Administracyjna lista zamówień: `GET /api/v1/admin/orders`. Odczyt z paginacją, filtrami i sortowaniem. Bez zmian danych.
+- [x] Szczegóły zamówienia w API: `GET /api/v1/admin/orders/:id`. Odczyt snapshotu, płatności, rezerwacji, historii i zdarzeń. Bez rozstrzygania płatności.
+- [x] Layout panelu i lista `/admin/orders` czytają API. Szczegóły w panelu pokazują skrót zamówienia. Logowanie administratora nie jest podłączone.
 - [ ] Zmiana statusu realizacji.
 - [ ] Historia statusów.
 - [ ] Lista klientów.

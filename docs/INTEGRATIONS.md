@@ -44,7 +44,7 @@ Sekrety P24 są w konfiguracji procesu API. Frontend ich nie widzi. Logi błęd�
 
 ### Czego ten przebieg nie jest
 
-Nie ma wspólnego adaptera dla innych usług. Nie ma kolejki zleceń trwałej poza wierszem `payments` i `payment_events`. Nie ma automatycznego ponowienia rejestracji ani weryfikacji. Nie ma widoku administracyjnego tych operacji. `POST /payments/:id/retry` i `POST /admin/orders/:id/mark-paid` są planowane, niezaimplementowane.
+Nie ma wspólnego adaptera dla innych usług. Nie ma kolejki zleceń trwałej poza wierszem `payments` i `payment_events`. Nie ma automatycznego ponowienia rejestracji ani weryfikacji. Nie ma widoku tych operacji w panelu. `GET /api/v1/admin/orders/:id` pokazuje zapisany `initialization_status` i zdarzenia bez payloadu. Nie ponawia rejestracji ani weryfikacji. `POST /payments/:id/retry` jest planowane i niezaimplementowane. `POST /api/v1/admin/orders/:id/mark-paid` potwierdza odbiór gotówki, a `POST /api/v1/admin/orders/:id/cancel` anuluje nieopłaconą gotówkę. Żadna z tych tras nie dotyczy Przelewy24.
 
 ## 3. Założenie architektoniczne
 

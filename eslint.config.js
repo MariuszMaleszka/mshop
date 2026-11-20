@@ -42,6 +42,7 @@ export default [
         ...globals.browser,
         useRuntimeConfig: 'readonly',
         useApi: 'readonly',
+        useHead: 'readonly',
         useRoute: 'readonly',
         definePageMeta: 'readonly',
       },

@@ -1,6 +1,8 @@
 import { createAccessTokenVerifier } from './auth/tokens.js'
 import { registerCartRoutes } from './cart/routes.js'
 import { registerCheckoutRoutes } from './checkout/routes.js'
+import { registerAdminOrderRoutes } from './admin-orders/routes.js'
+import { registerCashReceiptRoutes } from './cash-payment/routes.js'
 import { registerOrderRoutes } from './orders/routes.js'
 import { createP24Client } from './p24/client.js'
 import { registerP24WebhookRoutes } from './p24/webhook-routes.js'
@@ -45,6 +47,8 @@ const app = createApp(config, {
     registerCartRoutes(router, { database })
     registerCheckoutRoutes(router, { database, p24: config.p24 })
     registerOrderRoutes(router, { database })
+    registerCashReceiptRoutes(router, { database })
+    registerAdminOrderRoutes(router, { database })
     registerP24WebhookRoutes(router, {
       p24: config.p24,
       database,
