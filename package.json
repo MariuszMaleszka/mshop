@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "seed:local-catalog": "pnpm --filter @shop/api seed:local-catalog"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

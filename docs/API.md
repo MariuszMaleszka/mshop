@@ -192,7 +192,7 @@ Ciasteczko jest `HttpOnly`, `SameSite=Lax`, `Path=/`, bez `Domain`, z czasem ży
 
 Surowy identyfikator jest tylko w ciasteczku. SHA-256 tego identyfikatora, zapisany jako 64 znaki hex, jest jedyną postacią w koszyku gościa i w `carts.session_id`. Ten endpoint nie tworzy wiersza koszyka i nie zwraca identyfikatora ani skrótu.
 
-Żądanie z Nuxt do API jest cross-origin. Przeglądarka zapisze i odeśle ciasteczko dopiero wtedy, gdy klient wyśle `credentials: 'include'`, a API doda `Access-Control-Allow-Credentials`. Obecny CORS tego nie włącza.
+Żądanie z Nuxt do API jest cross-origin. CORS przepuszcza wyłącznie dokładny `WEB_ORIGIN`, domyślnie `http://localhost:3000`. Dla tego originu odpowiedź ma `Access-Control-Allow-Credentials: true` oraz nagłówki `Content-Type`, `Authorization` i `Idempotency-Key`. Nie ma `Access-Control-Allow-Origin: *` i origin z żądania nie jest odbijany. Przeglądarka zapisze i odeśle ciasteczko, gdy klient wyśle `credentials: 'include'`. Żądanie bez `Origin` oraz żądanie z innego originu nie dostają nagłówków dostępu.
 
 ## 6. Koszyk
 Zaimplementowane są koszyk gościa, koszyk konta i `POST /api/v1/cart/merge`. Te cztery ścieżki same koszyków nie scalają.

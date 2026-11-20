@@ -40,6 +40,8 @@ export default [
     languageOptions: {
       globals: {
         ...globals.browser,
+        useRuntimeConfig: 'readonly',
+        useApi: 'readonly',
       },
     },
     rules: {

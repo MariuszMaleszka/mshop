@@ -182,7 +182,7 @@ Ostatnia weryfikacja po migracji rezerwacji: `pnpm test` — 183 testy, 0 niepow
 
 **Następna czynność:** czekać na decyzję użytkownika. Checkout, worker i webhook P24 są już na `main`. Nie implementować ich od nowa. Nie włączać produkcyjnego checkoutu online. Nie podłączać scalania we frontendzie bez osobnej zgody. Nie powtarzać migracji.
 
-Świadomie odłożone: prefiks `__Host-`, credentialed CORS, `SameSite=Lax` przy osobnych domenach, redakcja gołego skrótu bez nazwy ciasteczka.
+Świadomie odłożone: prefiks `__Host-`, `SameSite=Lax` przy osobnych domenach, redakcja gołego skrótu bez nazwy ciasteczka. Credentialed CORS działa dla dokładnego `WEB_ORIGIN`.
 
 ## 8. Co pozostaje po scaleniu koszyków
 
@@ -190,7 +190,7 @@ Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` nie 
 
 ### Późniejsze, osobne etapy
 
-1. Integracja frontendu i obsługa CORS/cookie credentials – po ustaleniu domen i sposobu wdrożenia. Frontend nie wywołuje jeszcze `POST /api/v1/cart/merge`.
+1. Integracja frontendu. Credentialed CORS dla dokładnego `WEB_ORIGIN` jest włączony. Frontend nie wywołuje jeszcze `POST /api/v1/cart/merge`.
 2. Dokończenie płatności online poza sandboxem. API checkoutu, workera i webhooka jest na `main`. Checkout online działa tylko w sandboxie. Zapisany token wraca jako stały `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}`; host wymaga końcowego potwierdzenia podczas testu sandbox, bo specyfikacja REST 1.0.18 podaje bezpośrednio tylko adres produkcyjny. Stany `unknown` oraz `verification_requested` bez `verification_accepted` nie odzyskują się same; procedura jest w `docs/P24_RECONCILIATION.md`. Checkout nadal blokuje `seller_tax_status = unknown`. Przed dokumentami sprzedaży zostaje otwarte potwierdzenie księgowe agregacji VAT.
 
 ## 9. Otwarte decyzje na przyszłość
@@ -204,7 +204,7 @@ Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` nie 
 - Retencja danych.
 - Hosting i domeny produkcyjne.
 - Ograniczone uprawnienia użytkownika DB zamiast uprzywilejowanego połączenia `pg`.
-- CORS i `credentials: 'include'` po ustaleniu domen. Obecnie credentialed CORS nie jest skonfigurowany; przy cookie przeglądarkowym wymagane będzie dokładne dozwolone Origin i `Access-Control-Allow-Credentials: true`.
+- Domeny produkcyjne muszą być ustawione jako dokładny `WEB_ORIGIN`. Lokalny CORS zezwala na `http://localhost:3000`, `Access-Control-Allow-Credentials: true` i nagłówek `Idempotency-Key`. Wildcard originu nie jest używany.
 
 ## 10. Instrukcja dla Cursor przy wznowieniu
 
@@ -214,4 +214,4 @@ Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` są 
 
 Przy wznowieniu sprawdź `pnpm exec supabase migration list`. W repozytorium po rezerwacjach jest też `20261119120000_payment_initialization.sql`. Szczegóły kolumn są w `docs/DATABASE.md`.
 
-Następny etap wybiera użytkownik. Bez osobnej zgody nie włączaj produkcyjnego checkoutu online, nie powtarzaj `transaction/register` ani `transaction/verify` i nie zaczynaj frontendu ani CORS.
+Następny etap wybiera użytkownik. Bez osobnej zgody nie włączaj produkcyjnego checkoutu online, nie powtarzaj `transaction/register` ani `transaction/verify` i nie zaczynaj frontendu.

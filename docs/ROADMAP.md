@@ -54,7 +54,7 @@ Acceptance spełnione dla zastosowanych migracji:
 - check wiąże `tax_status` z `vat_rate`; waluta ma check formatu ISO 4217 i nie ma checka `= PLN`.
 - klient nie odczytuje cudzych zamówień ani koszyka przez PostgREST.
 
-Jeszcze otwarte: seed nie zawiera sekretów ani nadania roli `admin` przez rejestrację, bo seeda demonstracyjnego nie ma.
+Jeszcze otwarte: seed demonstracyjny całego sklepu nie istnieje. Lokalny skrypt katalogu nie nadaje roli `admin`, nie zawiera sekretów i nie zastępuje tego seeda.
 
 ## Phase 3 — Authentication & authorization
 Konfiguracja środowiska API, obsługa błędów HTTP, pula PostgreSQL, weryfikacja JWT, rola `admin` oraz walidacja żądań Zod są ukończone. Logowanie i sesja Nuxt nie są rozpoczęte.

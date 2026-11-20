@@ -165,6 +165,8 @@ Null w `vat_rate` sam nie oznacza zwolnienia. Check `products_tax_check` wymaga 
 
 Stan magazynowy nie zależy od typu produktu. Usługa i produkt cyfrowy nie muszą go mieć. Zaawansowanego magazynu nie ma.
 
+Lokalny skrypt `pnpm seed:local-catalog` dopisuje dwie aktywne kategorie i trzy aktywne produkty wyłącznie do PostgreSQL na `127.0.0.1:54322`, w bazie `postgres`. Jest idempotentny, nie nadpisuje różnych istniejących rekordów i nie zmienia `shop_profile`, klientów, zamówień, płatności, koszyków ani rezerwacji.
+
 ### `product_images`
 
 Jeszcze bez migracji. Poniższy opis zostaje uzgodnionym modelem zdjęć produktu.

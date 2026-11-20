@@ -12,6 +12,7 @@ function cors(webOrigin) {
   return function corsMiddleware(req, res, next) {
     if (req.headers.origin === webOrigin) {
       res.setHeader('Access-Control-Allow-Origin', webOrigin)
+      res.setHeader('Access-Control-Allow-Credentials', 'true')
       res.setHeader('Vary', 'Origin')
       res.setHeader(
         'Access-Control-Allow-Methods',
@@ -19,7 +20,7 @@ function cors(webOrigin) {
       )
       res.setHeader(
         'Access-Control-Allow-Headers',
-        'Content-Type, Authorization',
+        'Content-Type, Authorization, Idempotency-Key',
       )
       res.setHeader('Access-Control-Expose-Headers', 'X-Request-Id')
     }
