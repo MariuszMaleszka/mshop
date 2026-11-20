@@ -1,7 +1,7 @@
 # Punkt kontrolny projektu – sklep internetowy
 
-**Stan na:** 19 listopada 2026, po Step 12E.14  
-**Status bieżący:** Checkout gotówkowy i sandboxowy checkout online są na `main` (`315c438`). Rejestracja Przelewy24 następuje po commicie zamówienia. Webhook jest podłączony i potwierdza płatność przez `transaction/verify`. Produkcyjny checkout online pozostaje wyłączony. Rezerwacje online wygasają po 15 minutach od utworzenia zamówienia i spóźniona płatność ich nie przywraca. Ręczna rekonsyliacja jest w `docs/P24_RECONCILIATION.md`. Storefront nadal nie woła checkoutu.
+**Stan na:** 20 listopada 2026, po Step 12E.22  
+**Status bieżący:** Checkout gotówkowy i sandboxowy checkout online są na `main`. Rejestracja Przelewy24 następuje po commicie zamówienia. Webhook jest podłączony i potwierdza płatność przez `transaction/verify`. Produkcyjny checkout online pozostaje wyłączony. Rezerwacje online wygasają po 15 minutach od utworzenia zamówienia i spóźniona płatność ich nie przywraca ani nie rozwiązuje realizacji. Stany `unknown` oraz `verification_requested` bez `verification_accepted` wymagają ręcznego uzgodnienia z `docs/P24_RECONCILIATION.md`. Storefront ma katalog, koszyk gościa, formularz checkoutu gotówkowego i odczyt zamówienia. Checkout nadal blokują `SELLER_TAX_STATUS_UNKNOWN` i `VAT_POLICY_NOT_CONFIRMED`. Potwierdzenie odbioru gotówki i domknięcie rezerwacji gotówkowej nie są zaimplementowane. Strategia VAT dla stawek standardowych pozostaje nierozstrzygnięta.
 
 > Ten plik jest krótkim punktem wznowienia pracy dla Cursor i ChatGPT. Nie zastępuje dokumentacji technicznej projektu (`ARCHITECTURE.md`, `API.md`, `ROADMAP.md`) ani raportów z wykonania. W razie rozbieżności najpierw sprawdź aktualny kod i właściwą dokumentację projektu. Nie zakładaj, że opis w tym pliku jest nowszy niż repozytorium.
 
@@ -180,27 +180,34 @@ Wybór właściciela:
 
 Ostatnia weryfikacja po migracji rezerwacji: `pnpm test` — 183 testy, 0 niepowodzeń, 0 pominiętych; `pnpm lint` i `pnpm format:check` czyste. Testy integracyjne koszyka w `apps/api/test/cart.integration.test.js` obejmują wyścigi oparte o `pg_locks`.
 
-**Następna czynność:** czekać na decyzję użytkownika. Checkout, worker i webhook P24 są już na `main`. Nie implementować ich od nowa. Nie włączać produkcyjnego checkoutu online. Nie podłączać scalania we frontendzie bez osobnej zgody. Nie powtarzać migracji.
+**Następna czynność:** czekać na decyzję użytkownika. Checkout, worker, webhook P24, odczyt jednego zamówienia i gotówkowy formularz są już na `main`. Nie implementować ich od nowa. Nie włączać produkcyjnego checkoutu online. Nie podłączać scalania we frontendzie bez osobnej zgody. Nie powtarzać migracji. Nie obchodzić blokad sprzedawcy i VAT.
 
 Świadomie odłożone: prefiks `__Host-`, `SameSite=Lax` przy osobnych domenach, redakcja gołego skrótu bez nazwy ciasteczka. Credentialed CORS działa dla dokładnego `WEB_ORIGIN`.
 
 ## 8. Co pozostaje po scaleniu koszyków
 
-Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` nie są już zadaniami do zaplanowania. Poniższe etapy są osobne i niezacząte.
+Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` nie są już zadaniami do zaplanowania. Poniższe etapy pozostają otwarte. Część frontendu jest już zrobiona i nie jest osobnym, niezaczątym zadaniem.
 
 ### Późniejsze, osobne etapy
 
-1. Integracja frontendu. Credentialed CORS dla dokładnego `WEB_ORIGIN` jest włączony. Frontend nie wywołuje jeszcze `POST /api/v1/cart/merge`.
-2. Dokończenie płatności online poza sandboxem. API checkoutu, workera i webhooka jest na `main`. Checkout online działa tylko w sandboxie. Zapisany token wraca jako stały `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}`; host wymaga końcowego potwierdzenia podczas testu sandbox, bo specyfikacja REST 1.0.18 podaje bezpośrednio tylko adres produkcyjny. Stany `unknown` oraz `verification_requested` bez `verification_accepted` nie odzyskują się same; procedura jest w `docs/P24_RECONCILIATION.md`. Checkout nadal blokuje `seller_tax_status = unknown`. Przed dokumentami sprzedaży zostaje otwarte potwierdzenie księgowe agregacji VAT.
+1. Dokończenie frontendu. Credentialed CORS dla dokładnego `WEB_ORIGIN` jest włączony. Frontend ma katalog, koszyk gościa, formularz `cash` i stronę `/orders/{id}`. Nadal nie wywołuje `POST /api/v1/cart/merge`. Nie ma płatności online w formularzu ani strony powrotu z Przelewy24. Powrót przeglądarki nie potwierdza płatności.
+2. Dokończenie płatności online poza sandboxem. API checkoutu, workera i webhooka jest na `main`. Checkout online działa tylko w sandboxie. Zapisany token wraca jako stały `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}`; host wymaga końcowego potwierdzenia podczas testu sandbox, bo specyfikacja REST 1.0.18 podaje bezpośrednio tylko adres produkcyjny. Stany `unknown` oraz `verification_requested` bez `verification_accepted` nie odzyskują się same; procedura jest w `docs/P24_RECONCILIATION.md`. Checkout nadal blokuje `seller_tax_status = unknown` oraz `registered` ze stawką `standard`. `paid` po wygaśnięciu rezerwacji nie rozwiązuje realizacji. Gotówka nie ma procesu potwierdzenia odbioru ani domknięcia rezerwacji. Przed dokumentami sprzedaży zostaje otwarte potwierdzenie księgowe agregacji VAT.
 
 ## 9. Otwarte decyzje na przyszłość
 
 - Przelewy24 — decyzja podjęta. Jedyny operator online w MVP. Stripe nie jest implementowany. Schemat nadal dopuszcza `stripe`, żeby później dodać adapter bez zmiany tej decyzji.
+- Model pozostałych integracji — założenie opisane w `docs/INTEGRATIONS.md`, niezaimplementowane. mshop zostaje źródłem prawdy dla zamówienia, magazynu i realizacji. Dostawcy poza Przelewy24 nie są wybrani. Outbox, worker integracji i panel „Integracje” nie istnieją. Nie refaktoryzować P24 na generyczny adapter bez osobnej zgody. Nie ponawiać `transaction/register` ani `transaction/verify`.
 - Polityka precyzji VAT — decyzja techniczna podjęta tymczasowo. Opis jest w `docs/DATABASE.md`. To nie jest zatwierdzona polityka księgowa.
-- Sposób agregacji i zaokrąglania VAT na dokumentach — `OPEN — ACCOUNTANT CONFIRMATION REQUIRED`. Nie wybrano, czy grosz half-up liczyć osobno na pozycji, czy po zsumowaniu wartości w stawce. Otwarte są też różnice groszowe między tymi metodami oraz to, czy prezentacja kwot będzie prawidłowa na dokumentach sprzedaży sklepu.
-- Status sprzedawcy `unknown` — nadal blokuje checkout. Dane sprzedawcy wymagają świadomego uzupełnienia przed uruchomieniem sprzedaży.
-- Szczegóły wysyłki i obsługi produktów fizycznych.
-- Fakturowanie i dokumenty sprzedażowe.
+- Konsultacja z księgowym jest odłożona. Implementacja nie rozstrzyga poniższych punktów i nie traktuje wartości domyślnych schematu, pustych pól ani lokalnego katalogu testowego jako decyzji. Nie blokują dalszych prac technicznych. Blokują ostateczne uruchomienie sprzedaży w zakresie, którego dotyczą.
+  1. Status podatkowy sprzedawcy zostaje `unknown`, dopóki nie zostanie potwierdzony. Checkout przy `unknown` nie tworzy zamówienia.
+  2. Dane identyfikacyjne sprzedawcy i jego status VAT nie są ustalone. `registered` i `exempt` nie są wyborem domyślnym.
+  3. Klasyfikacja produktów i właściwe stawki VAT nie są ustalone.
+  4. Metoda naliczania i zaokrąglania VAT pozostaje `per_line` albo `per_rate`, bez wyboru. Szczegół techniczny jest w `docs/DATABASE.md` jako `OPEN — ACCOUNTANT CONFIRMATION REQUIRED`.
+  5. Rodzaje dokumentów sprzedaży dla osób prywatnych i firm nie są ustalone. Brak fakturowania w MVP nie wybiera rodzaju dokumentu.
+  6. Obowiązek stosowania kasy fiskalnej i ewentualne zwolnienia nie są ustalone.
+  7. Wymagania ewidencyjne dla płatności gotówkowych i internetowych nie są ustalone.
+  8. Wpływ wysyłki i odbioru osobistego na dokumentowanie sprzedaży nie jest ustalony. Brak modułu dostawy nie jest decyzją o dokumentowaniu.
+- Szczegóły operacyjne wysyłki i obsługi produktów fizycznych pozostają osobno od punktu 8.
 - Retencja danych.
 - Hosting i domeny produkcyjne.
 - Ograniczone uprawnienia użytkownika DB zamiast uprzywilejowanego połączenia `pg`.
@@ -214,4 +221,4 @@ Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` są 
 
 Przy wznowieniu sprawdź `pnpm exec supabase migration list`. W repozytorium po rezerwacjach jest też `20261119120000_payment_initialization.sql`. Szczegóły kolumn są w `docs/DATABASE.md`.
 
-Następny etap wybiera użytkownik. Bez osobnej zgody nie włączaj produkcyjnego checkoutu online, nie powtarzaj `transaction/register` ani `transaction/verify` i nie zaczynaj frontendu.
+Następny etap wybiera użytkownik. Bez osobnej zgody nie włączaj produkcyjnego checkoutu online, nie powtarzaj `transaction/register` ani `transaction/verify` i nie obchodź blokad `SELLER_TAX_STATUS_UNKNOWN` oraz `VAT_POLICY_NOT_CONFIRMED`. Nie uzupełniaj `shop_profile`, nie zmieniaj `seller_tax_status` i nie wybieraj `per_line` ani `per_rate` jako polityki sprzedaży. Nie dodawaj outboxa, dostawcy faktur, kuriera, fiskalizacji ani poczty tylko dlatego, że `docs/INTEGRATIONS.md` opisuje kierunek. Decyzje z sekcji 9 zostają do konsultacji z księgowym. Katalog, koszyk gościa, checkout gotówkowy i odczyt jednego zamówienia już są. Nie implementuj ich od nowa.

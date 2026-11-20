@@ -8,17 +8,18 @@ MVP nie jest marketplace'em ani systemem SaaS multi-tenant.
 ## 2. Komponenty
 
 ### `apps/web` — Nuxt 4
-Aplikacja jest w JavaScript, bez TypeScriptu w kodzie źródłowym. Działa szkielet frontendu. Storefront, koszyk, checkout, konto i panel `/admin` są planowane, nie są jeszcze zaimplementowane.
+Aplikacja jest w JavaScript, bez TypeScriptu w kodzie źródłowym. Storefront ma katalog, koszyk gościa, formularz checkoutu gotówkowego i stronę odczytu jednego zamówienia. Formularz wysyła wyłącznie `paymentMethod = cash`. Nie pokazuje płatności online jako działającej opcji i nie ma strony powrotu z Przelewy24. Konto klienta i panel `/admin` nadal są planowane.
 
-- publiczny storefront;
-- koszyk i checkout;
+- publiczny katalog;
+- koszyk gościa i przejście do checkoutu gotówkowego;
+- odczyt własnego zamówienia pod `/orders/{id}`;
 - konto klienta;
 - panel administracyjny pod `/admin`;
 - wyświetlanie danych pobieranych z API;
 - zarządzanie sesją Supabase Auth.
 
 ### `apps/api` — Express 5
-API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publiczny odczyt katalogu, koszyk gościa, koszyk konta, checkout gotówkowy i sandboxowy checkout online. Storefront, konto i panel nadal są planowane.
+API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publiczny odczyt katalogu, koszyk gościa, koszyk konta, checkout gotówkowy, sandboxowy checkout online i `GET /api/v1/orders/:id`. Konto klienta i panel nadal są planowane.
 
 - REST API;
 - weryfikacja access tokenu Supabase biblioteką `jose` i publicznym JWKS; podpis, `iss`, `aud`, `exp` i UUID w `sub` są sprawdzane, a `req.auth.userId` dostaje dopiero zweryfikowany `sub`;
@@ -29,7 +30,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publi
 - błędy HTTP przechodzą przez jedno middleware; logi nie zawierają nagłówków, body, query stringu ani sekretów;
 - dostęp do PostgreSQL idzie przez jedną pulę `pg` i serwerowy `DATABASE_URL`, bez Supabase SDK i bez ORM;
 - klucz `service_role` zostaje sekretem serwerowym i nie jest potrzebny, dopóki nie ma Storage albo administracyjnego API Auth;
-- adapter HTTP Przelewy24 w `apps/api/src/p24` rejestruje transakcję sandboxową dopiero po commicie zamówienia; `payments.id` jest `sessionId`; webhook `POST /webhooks/payments/przelewy24` jest podłączony i potwierdza płatność wyłącznie przez `transaction/verify` z dokładnym `data.status` równym `success`; inne statusy zostają nierozstrzygnięte i nie zapisują `verification_declined`; `verification_requested` commituje się przed HTTP, a `verification_accepted` razem ze statusem `paid` w jednej transakcji; drugiego `verifyTransaction` nie ma; powrót przeglądarki nie ustawia `paid`; worker `pnpm --filter @shop/api expiry:worker` wygasza rezerwacje online po 15 minutach od utworzenia zamówienia i nie przywraca ich przy spóźnionej płatności; produkcyjny checkout online pozostaje wyłączony; zapisany token sandboxu wraca jako stały `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}`, a host ten wymaga końcowego potwierdzenia podczas testu sandbox; dostawca e-mail nadal niepodłączony.
+- adapter HTTP Przelewy24 w `apps/api/src/p24` rejestruje transakcję sandboxową dopiero po commicie zamówienia; `payments.id` jest `sessionId`; webhook `POST /webhooks/payments/przelewy24` jest podłączony i potwierdza płatność wyłącznie przez `transaction/verify` z dokładnym `data.status` równym `success`; inne statusy zostają nierozstrzygnięte i nie zapisują `verification_declined`; `verification_requested` commituje się przed HTTP, a `verification_accepted` razem ze statusem `paid` w jednej transakcji; drugiego `verifyTransaction` nie ma; powrót przeglądarki nie ustawia `paid`; worker `pnpm --filter @shop/api expiry:worker` wygasza rezerwacje online po 15 minutach od utworzenia zamówienia i nie przywraca ich przy spóźnionej płatności; późniejsze `paid` nie zmienia realizacji ani stanu magazynowego; produkcyjny checkout online pozostaje wyłączony; zapisany token sandboxu wraca jako stały `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}`, a host ten wymaga końcowego potwierdzenia podczas testu sandbox; dostawca e-mail nadal niepodłączony.
 
 ### Supabase
 - PostgreSQL jako główna baza danych;
@@ -42,7 +43,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publi
 1. Nuxt komunikuje się z Express przez HTTPS/REST.
 2. Nuxt przekazuje access token Supabase w nagłówku `Authorization: Bearer <token>`.
 3. Express weryfikuje access token. Supabase Auth loguje użytkownika i wydaje JWT. Express nie przyjmuje haseł i nie używa `SUPABASE_SERVICE_ROLE_KEY` ani sekretu HMAC. Adres JWKS powstaje z `SUPABASE_URL`: `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. Jedna funkcja `createRemoteJWKSet` powstaje przy starcie procesu i nie pobiera kluczy, dopóki pierwsza chroniona trasa nie sprawdzi tokenu. Zestaw jest cache'owany przez 10 minut. Nieznany `kid` powoduje ponowne pobranie po 30 sekundach, więc rotacja klucza nie wymaga restartu. Dozwolone algorytmy to `ES256` i `RS256`. Brak nagłówka albo token odrzucony daje HTTP 401. Niedostępny JWKS daje HTTP 503, a nie 401. Middleware `requireAuth` nie obejmuje całego API. `GET /api/v1/health` i `GET /api/v1/health/ready` pozostają publiczne.
-4. Express sprawdza uprawnienia do konkretnej operacji i zasobu. `requireAdmin` wykonuje `SELECT 1 FROM public.user_roles WHERE user_id = $1 AND role = 'admin' LIMIT 1`. Brak wcześniejszego `req.auth.userId` daje HTTP 401. Brak wiersza daje HTTP 403. Błąd zapytania daje HTTP 503 i nie jest traktowany jako brak roli. Claim roli w JWT nie jest używany. Middleware nie jest globalne. Koszyk konta sprawdza właściciela w SQL przez `req.auth.userId`. Własność pozostałych zasobów klienta pozostaje przy przyszłych endpointach.
+4. Express sprawdza uprawnienia do konkretnej operacji i zasobu. `requireAdmin` wykonuje `SELECT 1 FROM public.user_roles WHERE user_id = $1 AND role = 'admin' LIMIT 1`. Brak wcześniejszego `req.auth.userId` daje HTTP 401. Brak wiersza daje HTTP 403. Błąd zapytania daje HTTP 503 i nie jest traktowany jako brak roli. Claim roli w JWT nie jest używany. Middleware nie jest globalne. Koszyk konta sprawdza właściciela w SQL przez `req.auth.userId`. `GET /api/v1/orders/:id` sprawdza właściciela w SQL: konto po `orders.user_id`, gość po `orders.session_id`. Lista zamówień i pozostałe zasoby klienta pozostają przy przyszłych endpointach.
 5. Operacje biznesowe są wykonywane w backendzie.
 6. Backend zapisuje dane w PostgreSQL.
 7. Frontend otrzymuje tylko dane niezbędne do wyświetlenia.
@@ -84,14 +85,14 @@ shop/
 
 ## 5. Moduły domenowe backendu
 
-Poniższy podział jest docelowy. Zaimplementowany jest publiczny odczyt katalogu, koszyk gościa, koszyk konta, jawne scalenie koszyków, checkout gotówkowy i sandboxowy checkout online. Produkcyjny checkout online pozostaje wyłączony. Odczyt zamówień klienta, panel administracyjny i powiadomienia nie są jeszcze zaimplementowane.
+Poniższy podział jest docelowy. Zaimplementowany jest publiczny odczyt katalogu, koszyk gościa, koszyk konta, jawne scalenie koszyków, checkout gotówkowy, sandboxowy checkout online i odczyt jednego zamówienia. Produkcyjny checkout online pozostaje wyłączony. Lista zamówień, panel administracyjny i powiadomienia nie są jeszcze zaimplementowane.
 
 - `auth`: weryfikacja tożsamości i kontekst użytkownika; bez implementowania własnego systemu haseł.
 - `customers`: profile, typ klienta, adresy.
 - `catalog`: publiczny odczyt aktywnych kategorii i produktów przez `pg`. Zapytania jawnie filtrują `is_active = true`, bo rola z `DATABASE_URL` może omijać RLS. Szczegóły są po UUID. Nieaktywna kategoria nie zmienia wiersza produktu; w odpowiedzi szczegółów `category_id` jest wtedy `null`. Zapis, media i panel administratora nie są zaimplementowane.
 - `cart`: `GET /api/v1/cart` oraz `POST`, `PATCH` i `DELETE` na `/api/v1/cart/items` obsługują dwa niezależne koszyki. Brak nagłówka `Authorization` zostawia koszyk gościa. Nagłówek kieruje żądanie przez `requireAuth`, a właścicielem jest `req.auth.userId`. Ciasteczko nie wybiera wtedy koszyka i nie jest zmieniane. Sesja gościa to ciasteczko `shop_guest_session` ustawiane wyłącznie przez `POST /api/v1/session/guest`. Surowy identyfikator zostaje w ciasteczku. Zapis koszyka gościa używa tylko `hashGuestSessionId`, czyli SHA-256 tej wartości. Zapis koszyka konta wymaga `user_id` z tokenu i `session_id IS NULL`. Cena zostaje w katalogu. Zmiana koszyka najpierw bierze transakcyjną blokadę właściciela. Dodanie i zmiana ilości idą jedną transakcją połączenia: koszyk jest blokowany, a kwota pozycji i suma są sprawdzane jako `bigint` przed zapisem. Kwota spoza bezpiecznego integera JavaScriptu daje HTTP 400 i wycofanie zapisu. `POST /api/v1/cart/merge` jest jawnym scaleniem po `requireAuth`. Ciasteczko czyta tylko ten endpoint. W jednej transakcji bierze blokadę gościa `71001`, potem konta `71002`, potem blokuje rekord koszyka gościa. Brak pozycji nic nie zmienia. Sam koszyk gościa staje się koszykiem konta przez zmianę właściciela. Gdy koszyk konta już jest, pozycje są dopisywane albo sumowane, a koszyk gościa dostaje `abandoned` bez zmiany `session_id`. `converted` zostaje dla checkoutu.
-- `checkout`: `POST /api/v1/checkout` tworzy zamówienie gotówkowe oraz sandboxowe zamówienie online. Produkcyjny checkout online pozostaje wyłączony.
-- `orders`: odczyt, statusy i historia zamówień.
+- `checkout`: `POST /api/v1/checkout` tworzy zamówienie gotówkowe oraz sandboxowe zamówienie online. `seller_tax_status = unknown` daje `SELLER_TAX_STATUS_UNKNOWN`. Sprzedawca `registered` i produkt `standard` dają `VAT_POLICY_NOT_CONFIRMED`. Produkcyjny checkout online pozostaje wyłączony. Storefront woła wyłącznie wariant gotówkowy.
+- `orders`: `GET /api/v1/orders/:id` zwraca aktualny stan własnego zamówienia i niczego nie zapisuje. Lista zamówień oraz zmiana statusu realizacji nie są zaimplementowane.
 - `payments`: rejestracja sandboxowa, webhook i finalizacja po dokładnym `success` są podłączone. Zwroty nie są zaimplementowane. Planowane ręczne potwierdzenie dotyczy gotówki, nie płatności Przelewy24. Powtórzenia żądań HTTP obsługuje `idempotency_keys`, nie `payment_events`.
 - `admin`: operacje administracyjne i dashboard.
 - `notifications`: e-maile transakcyjne.
@@ -141,7 +142,7 @@ Nie dodawaj `store_id` i wielosklepowości do wszystkich tabel bez decyzji o bud
 Ustalone dla schematu i MVP:
 
 - zakup gościnny jest dozwolony; historia konta obejmuje zamówienia złożone po zalogowaniu;
-- model cen, waluty i VAT opisany w `docs/DATABASE.md`;
+- model cen, waluty i tymczasowa arytmetyka VAT są opisane w `docs/DATABASE.md`; nie jest to zatwierdzona decyzja księgowa;
 - jeden produkt ma jedną kategorię; typy to `physical`, `digital` i `service`;
 - na MVP nie ma dostaw, wariantów, faktur, kuponów, rezerwacji ani wielu sklepów.
 
@@ -149,5 +150,13 @@ Przed implementacją produkcyjną nadal należy zatwierdzić:
 
 - końcowe potwierdzenie hosta `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}` podczas testu sandbox; specyfikacja REST 1.0.18 podaje bezpośrednio tylko adres produkcyjny; produkcyjny checkout online pozostaje wyłączony mimo podłączonego webhooka; ręczna rekonsyliacja stanów `unknown` oraz `verification_requested` bez `verification_accepted` jest w `docs/P24_RECONCILIATION.md`;
 - sposób realizacji usług i produktów cyfrowych;
-- dokumenty sprzedaży, moment obowiązku podatkowego i retencję danych;
+- dokumenty sprzedaży, moment obowiązku podatkowego i retencję danych; pełna lista kwestii odłożonych do konsultacji z księgowym jest w `docs/PROJECT_HANDOFF.md`; nie blokują dalszych prac technicznych, blokują ostateczne uruchomienie sprzedaży w zakresie, którego dotyczą, i implementacja ich nie rozstrzyga;
 - hosting API, frontendu i Supabase.
+
+## 10. Integracje zewnętrzne
+
+mshop zostaje źródłem prawdy dla zamówienia, koszyka, magazynu, realizacji, uprawnień i konfiguracji. Dostawca wykonuje tylko swoją specjalizację i nie przejmuje logiki sklepu. Projekt jest w `docs/INTEGRATIONS.md`.
+
+Zaimplementowane jest wyłącznie sandboxowe Przelewy24 oraz worker wygaszania rezerwacji. Nie ma outboxa, workera integracji, fakturowania, KSeF, kuriera, fiskalizacji, poczty transakcyjnej, SMS ani panelu „Integracje”. Produkcyjny checkout online pozostaje wyłączony. Wynik nieznany rejestracji albo weryfikacji nie jest automatycznie ponawiany.
+
+Założenie na przyszłość: adapter na dostawcę, lokalny i zewnętrzny identyfikator, mapa statusów z jawnym stanem nierozstrzygniętym oraz trwałe zlecenie zapisywane razem ze zmianą lokalną. Płatność, dokument i przesyłka nie są bezpieczne do ślepego ponowienia. Dostawcy poza Przelewy24 nie są wybrani.

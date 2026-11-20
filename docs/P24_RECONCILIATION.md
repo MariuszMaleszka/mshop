@@ -4,7 +4,7 @@ Ten dokument opisuje dwa stany, których bieżący kod nie domyka automatycznie.
 
 Kod nie ma bezpiecznej procedury automatycznego odzyskania żadnego z tych stanów. Ponowienie `transaction/register` i ponowienie `transaction/verify` są zabronione. Ręczne `UPDATE` nie jest zwykłą procedurą. Sam HTTP 200 oraz sam status z podglądu transakcji nie są zakończoną weryfikacją.
 
-Lokalne `paid` powstaje tylko wtedy, gdy webhook zapisze w jednej transakcji `verification_accepted`, status płatności, status zamówienia, `provider_transaction_id`, `paid_at` i historię. Powrót przeglądarki na `urlReturn` nie ma endpointu i niczego nie potwierdza.
+Lokalne `paid` powstaje tylko wtedy, gdy webhook zapisze w jednej transakcji `verification_accepted`, status płatności, status zamówienia, `provider_transaction_id`, `paid_at` i historię. Powrót przeglądarki na `urlReturn` nie ma endpointu i niczego nie potwierdza. Jeśli to `paid` powstanie po wygaśnięciu rezerwacji, rezerwacja zostaje `expired`, a `stock_quantity` i `fulfillment_status` pozostają bez zmian. Samo potwierdzenie płatności nie rozwiązuje realizacji zamówienia.
 
 Identyfikatory i kwoty porównuj jako tekst. Nie zamieniaj ich na liczbę JavaScriptu. Kwoty w bazie są groszami.
 

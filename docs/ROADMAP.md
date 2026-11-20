@@ -108,7 +108,7 @@ Acceptance:
 - pliki mają prawidłowe uprawnienia.
 
 ## Phase 6 — Cart & checkout
-Ciasteczko sesji gościa, API koszyka gościa, API koszyka konta i jawne łączenie koszyków są ukończone. Checkout API jest rozpoczęty. Zamówienie gotówkowe powstaje bez operatora online. Checkout online działa tylko w sandboxie i po commicie woła rejestrację Przelewy24. Produkcyjny checkout online pozostaje wyłączony. Frontend sklepu nadal nie woła checkoutu. Schemat snapshotu sprzedawcy, stawek VAT i rezerwacji stanu jest w bazie. Checkout pozostaje zablokowany przy `seller_tax_status = unknown` i nie startuje sprzedaży, dopóki dane sprzedawcy nie zostaną świadomie uzupełnione. Tymczasowa precyzja VAT jest opisana w `docs/DATABASE.md`. Agregacja i zaokrąglanie VAT na dokumentach mają status `OPEN — ACCOUNTANT CONFIRMATION REQUIRED` i nie są warunkiem zapisu tej decyzji.
+Ciasteczko sesji gościa, API koszyka gościa, API koszyka konta i jawne łączenie koszyków są ukończone. Checkout API jest rozpoczęty. Zamówienie gotówkowe powstaje bez operatora online. Checkout online działa tylko w sandboxie i po commicie woła rejestrację Przelewy24. Produkcyjny checkout online pozostaje wyłączony. Frontend ma katalog, koszyk gościa, formularz checkoutu gotówkowego i stronę odczytu zamówienia. Nie woła `POST /api/v1/cart/merge`, nie oferuje działającej płatności online i nie ma strony powrotu z Przelewy24. Schemat snapshotu sprzedawcy, stawek VAT i rezerwacji stanu jest w bazie. Checkout pozostaje zablokowany przy `seller_tax_status = unknown` oraz przy sprzedawcy `registered` i produkcie `standard` (`VAT_POLICY_NOT_CONFIRMED`). Nie startuje sprzedaży, dopóki dane sprzedawcy nie zostaną świadomie uzupełnione, a strategia VAT dla stawek standardowych nie zostanie zatwierdzona. Tymczasowa precyzja VAT jest opisana w `docs/DATABASE.md`. Agregacja i zaokrąglanie VAT na dokumentach mają status `OPEN — ACCOUNTANT CONFIRMATION REQUIRED` i nie są warunkiem zapisu tej decyzji. Pozostałe kwestie podatkowe i księgowe, w tym dokumenty sprzedaży, kasa fiskalna, ewidencja płatności oraz wpływ wysyłki i odbioru osobistego, są odłożone do konsultacji z księgowym w `docs/PROJECT_HANDOFF.md`. Nie blokują dalszych prac technicznych i nie są rozstrzygane przez kod.
 
 - [x] Ustawiać ciasteczko `shop_guest_session` i liczyć skrót SHA-256. Wiersz `carts` powstaje przy pierwszej pozycji gościa.
 - [x] Koszyk gościa identyfikowany ciasteczkiem `httpOnly`; w bazie tylko skrót sekretu.
@@ -129,7 +129,7 @@ Acceptance:
 - przy statusie sprzedawcy `unknown` zamówienie nie powstaje.
 
 ## Phase 7 — Payments
-Checkout gotówkowy zapisuje zamówienie bez operatora online. Checkout online rejestruje transakcję sandboxową po commicie zamówienia. Produkcyjny checkout online pozostaje wyłączony. Webhook i `transaction/verify` są podłączone. Zapisany token sandboxu wraca jako stały adres panelu. Końcowe potwierdzenie tego hosta podczas testu sandbox pozostaje otwarte, podobnie jak lista definitywnych odmów weryfikacji oraz automatyczne odzyskanie `unknown` i `verification_requested`.
+Checkout gotówkowy zapisuje zamówienie bez operatora online. Płatność zostaje `pending`, rezerwacja `active` bez terminu wygaśnięcia, a potwierdzenie odbioru gotówki i domknięcie tej rezerwacji nie są zaimplementowane. Checkout online rejestruje transakcję sandboxową po commicie zamówienia. Produkcyjny checkout online pozostaje wyłączony. Webhook i `transaction/verify` są podłączone. Zapisany token sandboxu wraca jako stały adres panelu. Końcowe potwierdzenie tego hosta podczas testu sandbox pozostaje otwarte, podobnie jak lista definitywnych odmów weryfikacji oraz automatyczne odzyskanie `unknown` i `verification_requested`. Powrót przeglądarki nie potwierdza płatności. `paid` po wygaśnięciu rezerwacji nie przywraca stanu ani nie ustawia realizacji.
 
 - [x] Integracja operatora w trybie sandbox, bez produkcyjnego uruchomienia.
 - [x] Utworzenie transakcji po commicie zamówienia.
@@ -147,7 +147,7 @@ Acceptance:
 
 ## Phase 8 — Orders & admin
 - [ ] Lista zamówień klienta.
-- [ ] Szczegóły zamówienia.
+- [x] Szczegóły jednego zamówienia: `GET /api/v1/orders/:id` i strona `/orders/{id}`. Odczyt nie oznacza zamówienia jako opłaconego.
 - [ ] Admin lista i szczegóły.
 - [ ] Zmiana statusu realizacji.
 - [ ] Historia statusów.
@@ -187,11 +187,15 @@ Acceptance:
 - środowisko produkcyjne nie używa kluczy testowych.
 
 ## Po MVP — rozszerzenia
+
+Wspólny model integracji jest opisany w `docs/INTEGRATIONS.md` i nie jest zaimplementowany. Pozycje fakturowania i wysyłki nie wybierają dostawcy. Płatność, dokument i utworzenie przesyłki nie mogą być ślepo ponawiane. Fiskalizacja zależy od odłożonej konsultacji z księgowym.
+
 - [ ] Booking: terminy i dostępność usług.
 - [ ] Galleries: prywatne galerie zdjęć.
 - [ ] Digital delivery: bezpieczne pobieranie plików.
 - [ ] Coupons: rabaty.
-- [ ] Invoices: integracja fakturowania.
-- [ ] Delivery: wysyłka fizycznych produktów.
+- [ ] Invoices: integracja fakturowania. Dostawca i KSeF nie są wybrani.
+- [ ] Delivery: wysyłka fizycznych produktów. Broker kurierski nie jest wybrany.
+- [ ] Wspólne trwałe zlecenia integracji i panel „Integracje”. Outbox i worker integracji nie istnieją. Worker rezerwacji ich nie zastępuje.
 - [ ] Multi-tenant: wiele sklepów.
 - [ ] Subscriptions: płatności cykliczne.

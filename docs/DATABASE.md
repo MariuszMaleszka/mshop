@@ -226,7 +226,7 @@ Produkt obecny w koszyku nie może zostać usunięty. Admin go dezaktywuje.
 
 ## 6. Zamówienia
 
-Checkout jest jedną transakcją. Przy `shop_profile.seller_tax_status = unknown` transakcja nie startuje.
+Checkout jest jedną transakcją. Przy `shop_profile.seller_tax_status = unknown` odczyt profilu odrzuca żądanie kodem `SELLER_TAX_STATUS_UNKNOWN`, transakcja się wycofuje i zamówienie nie zostaje zapisane. Sprzedawca `registered` z produktem `standard` też wycofuje transakcję, kodem `VAT_POLICY_NOT_CONFIRMED`, bo strategia VAT dla stawki standardowej nie jest zatwierdzona.
 
 Express sprawdza, że każdy produkt koszyka ma tę samą walutę co koszyk. Na MVP ta waluta musi być `PLN`. Do zamówienia i płatności trafia kod z tej chwili. Później się nie zmienia.
 
@@ -250,7 +250,7 @@ Tymczasowa polityka techniczna dla `standard` przy sprzedawcy `registered`, niez
 - jak postępować z różnicami groszowymi między tymi metodami;
 - czy ta kalkulacja i prezentacja kwot będzie prawidłowa na dokumentach sprzedaży sklepu.
 
-Żadna z tych metod agregacji nie jest zatwierdzona.
+Żadna z tych metod agregacji nie jest zatwierdzona. Status sprzedawcy, jego dane identyfikacyjne, klasyfikacja produktów i stawki, rodzaj dokumentu sprzedaży dla osoby prywatnej i firmy, kasa fiskalna, ewidencja płatności gotówkowych i internetowych oraz wpływ wysyłki i odbioru osobistego na dokumentowanie sprzedaży też nie są rozstrzygnięte. Są odłożone do konsultacji z księgowym w `docs/PROJECT_HANDOFF.md`. Nie blokują dalszych prac technicznych. Blokują ostateczne uruchomienie sprzedaży w zakresie, którego dotyczą. Implementacja nie wybiera dla nich wartości domyślnej.
 
 Gdy sprzedawca jest `exempt`, zastosowany status każdej pozycji to `exempt`, zastosowana stawka jest null, podatek wynosi 0, a netto równa się brutto. Snapshot katalogowy zostaje taki, jaki był na produkcie.
 
@@ -349,7 +349,7 @@ Jedna rezerwacja na pozycję zamówienia. `payment_method` jest kopią metody za
 - `created_at timestamptz not null`
 - `updated_at timestamptz not null`
 
-Aktywna rezerwacja wymaga produktu. Aktywna rezerwacja `online` wymaga `expires_at`, a aktywna rezerwacja `cash` wymaga pustego `expires_at`. Checkout online zapisuje termin jako `clock_timestamp() + 15 minutes` w transakcji zamówienia. Osobny proces `pnpm --filter @shop/api expiry:worker` co 30 sekund po zakończeniu poprzedniego przebiegu oznacza należne aktywne rezerwacje online całego zamówienia jako `expired`. Nie zmienia `stock_quantity`, statusu zamówienia ani statusu płatności. Zwolnienie rezerwacji zwiększa ilość dostępną w checkoutcie, bo ta ilość jest stanem produktu pomniejszonym o aktywne rezerwacje. Złożony klucz `(order_item_id, product_id)` wskazuje `order_items (id, product_id)`, z `on update cascade` i `on delete set null (product_id)`. Usunięcie produktu przy rezerwacji `consumed`, `released` albo `expired` zeruje `product_id` i zostawia `order_item_id`. Przy statusie `active` ten sam zapis odrzuca `CHECK` i całe usunięcie produktu się wycofuje.
+Aktywna rezerwacja wymaga produktu. Aktywna rezerwacja `online` wymaga `expires_at`, a aktywna rezerwacja `cash` wymaga pustego `expires_at`. Checkout online zapisuje termin jako `clock_timestamp() + 15 minutes` w transakcji zamówienia. Osobny proces `pnpm --filter @shop/api expiry:worker` co 30 sekund po zakończeniu poprzedniego przebiegu oznacza należne aktywne rezerwacje online całego zamówienia jako `expired`. Nie zmienia `stock_quantity`, statusu zamówienia ani statusu płatności. Checkout gotówkowy zostawia rezerwację `active` z pustym `expires_at`. Aplikacja nie przechodzi tej rezerwacji do `consumed` ani `released` i nie ma endpointu, który oznacza gotówkę jako opłaconą. Późniejsze `paid`, także po wygaśnięciu rezerwacji online, nie zmienia rezerwacji, `stock_quantity` ani `fulfillment_status`, więc samo potwierdzenie płatności nie rozwiązuje realizacji. Zwolnienie rezerwacji zwiększa ilość dostępną w checkoutcie, bo ta ilość jest stanem produktu pomniejszonym o aktywne rezerwacje. Złożony klucz `(order_item_id, product_id)` wskazuje `order_items (id, product_id)`, z `on update cascade` i `on delete set null (product_id)`. Usunięcie produktu przy rezerwacji `consumed`, `released` albo `expired` zeruje `product_id` i zostawia `order_item_id`. Przy statusie `active` ten sam zapis odrzuca `CHECK` i całe usunięcie produktu się wycofuje.
 
 RLS jest włączone. Nie ma polityk. `anon` i `authenticated` nie mają uprawnień.
 
