@@ -29,6 +29,7 @@ const envSchema = z
     SUPABASE_URL: z.string().optional(),
     SUPABASE_ANON_KEY: z.string().optional(),
     SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+    SESSION_TOKEN_KEY: z.string().optional(),
     P24_ENVIRONMENT: z.string().optional(),
     P24_MERCHANT_ID: z.string().optional(),
     P24_POS_ID: z.string().optional(),
@@ -63,6 +64,7 @@ function readEnv(env) {
     SUPABASE_URL: blankToUndefined(env?.SUPABASE_URL),
     SUPABASE_ANON_KEY: blankToUndefined(env?.SUPABASE_ANON_KEY),
     SUPABASE_SERVICE_ROLE_KEY: blankToUndefined(env?.SUPABASE_SERVICE_ROLE_KEY),
+    SESSION_TOKEN_KEY: blankToUndefined(env?.SESSION_TOKEN_KEY),
     P24_ENVIRONMENT: blankToUndefined(env?.P24_ENVIRONMENT),
     P24_MERCHANT_ID: blankToUndefined(env?.P24_MERCHANT_ID),
     P24_POS_ID: blankToUndefined(env?.P24_POS_ID),
@@ -255,6 +257,35 @@ function readSupabaseUrl(value, nodeEnv, ctx) {
   }
 
   return url.origin
+}
+
+function readSessionTokenKey(value, nodeEnv, ctx) {
+  if (!value) {
+    return null
+  }
+
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(value)) {
+    addIssue(ctx, 'SESSION_TOKEN_KEY')
+    return null
+  }
+
+  const key = Buffer.from(value, 'base64')
+
+  if (key.length !== 32 || key.toString('base64') !== value) {
+    addIssue(ctx, 'SESSION_TOKEN_KEY')
+    return null
+  }
+
+  if (nodeEnv === 'production' && key.every((byte) => byte === 0)) {
+    addIssue(
+      ctx,
+      'SESSION_TOKEN_KEY',
+      'must not use a placeholder in production',
+    )
+    return null
+  }
+
+  return key
 }
 
 function readOptionalSecret(value, field, nodeEnv, ctx) {
@@ -534,6 +565,11 @@ const configSchema = envSchema.transform((env, ctx) => {
     resolvedEnv,
     ctx,
   )
+  const sessionTokenKey = readSessionTokenKey(
+    env.SESSION_TOKEN_KEY,
+    resolvedEnv,
+    ctx,
+  )
   const p24 = readP24Config(env, resolvedEnv, ctx)
 
   return {
@@ -547,6 +583,7 @@ const configSchema = envSchema.transform((env, ctx) => {
     supabaseUrl,
     supabaseAnonKey,
     supabaseServiceRoleKey,
+    sessionTokenKey,
     p24,
   }
 })

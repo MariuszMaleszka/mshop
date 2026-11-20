@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
 import { describe, it } from 'node:test'
 import { loadConfig } from '../src/config.js'
 
@@ -35,6 +36,7 @@ describe('loadConfig', () => {
       supabaseUrl: null,
       supabaseAnonKey: null,
       supabaseServiceRoleKey: null,
+      sessionTokenKey: null,
       p24: null,
     })
   })
@@ -149,6 +151,33 @@ describe('loadConfig', () => {
 
     assert.match(error.message, /SUPABASE_SERVICE_ROLE_KEY/)
     assert.equal(error.message.includes(secret), false)
+  })
+
+  it('accepts a 32-byte session token key and rejects a short one', () => {
+    const key = randomBytes(32)
+    const config = loadConfig({
+      NODE_ENV: 'test',
+      SESSION_TOKEN_KEY: key.toString('base64'),
+    })
+
+    assert.equal(config.sessionTokenKey.equals(key), true)
+
+    const error = configError({
+      NODE_ENV: 'test',
+      SESSION_TOKEN_KEY: 'not-a-key',
+    })
+
+    assert.match(error.message, /SESSION_TOKEN_KEY/)
+    assert.equal(error.message.includes('not-a-key'), false)
+  })
+
+  it('rejects an all-zero session token key in production', () => {
+    const error = configError({
+      ...productionBase,
+      SESSION_TOKEN_KEY: Buffer.alloc(32).toString('base64'),
+    })
+
+    assert.match(error.message, /SESSION_TOKEN_KEY/)
   })
 
   it('accepts an explicit production configuration', () => {

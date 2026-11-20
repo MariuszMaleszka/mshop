@@ -41,6 +41,52 @@ Wyłącznie rola podwyższona.
 
 Brak wiersza oznacza klienta. Rejestracja nie wstawia roli. `admin` nadaje tylko zaufana operacja serwerowa.
 
+### `account_sessions`
+
+Sesja konta. Nie jest sesją gościa i nie zawiera logowania. Surowego identyfikatora sesji, sekretu CSRF, access tokenu ani refresh tokenu w tabeli nie ma.
+
+- `id_hash char(64) PK` — SHA-256 identyfikatora sesji, tylko małe hex
+- `user_id uuid not null references auth.users(id) on delete cascade`
+- `refresh_state text not null` — `ready`, `pending` albo `unknown`
+- `refresh_generation uuid null` — wymagane przy `pending`, puste przy `ready`
+- `refresh_started_at timestamptz null` — wymagane przy `pending`
+- `refresh_token_hash char(64) null` — SHA-256 refresh tokenu wysłanego do rotacji, tylko przy `pending`
+- `key_version smallint not null` — wersja klucza AES-256-GCM, co najmniej 1
+- `access_ciphertext`, `access_nonce`, `access_tag` — albo wszystkie puste, albo nonce ma 12 bajtów i tag 16
+- `refresh_ciphertext`, `refresh_nonce`, `refresh_tag` — ten sam układ
+- `csrf_token_hash char(64) not null`
+- `absolute_expires_at timestamptz not null` — po `created_at`
+- `idle_expires_at timestamptz not null` — po `created_at` i nie później niż `absolute_expires_at`
+- `created_at timestamptz not null`
+- `updated_at timestamptz not null`
+
+`ready` wymaga obu zestawów tokenów i pustych pól rotacji. `pending` wymaga obu zestawów, generacji, czasu startu i skrótu refresh tokenu. `unknown` wymaga pustych tokenów i pustego skrótu refresh tokenu. Indeks częściowy `(refresh_started_at)` obejmuje tylko `pending`. RLS jest włączone. `anon`, `authenticated` i `service_role` nie mają żadnych uprawnień do tej tabeli ani do `login_challenges` i `auth_attempt_counters`.
+
+### `login_challenges`
+
+Wyzwanie CSRF przed sesją. Surowego identyfikatora i sekretu nie ma.
+
+- `id_hash char(64) PK`
+- `csrf_token_hash char(64) not null`
+- `expires_at timestamptz not null` — po `created_at`
+- `consumed_at timestamptz null` — puste albo nie wcześniejsze niż `created_at`
+- `created_at timestamptz not null`
+- `updated_at timestamptz not null`
+
+Indeks na `expires_at`. RLS jak przy sesji konta.
+
+### `auth_attempt_counters`
+
+Licznik okna. Klucz nie zawiera jawnego adresu ani e-maila.
+
+- klucz główny (`bucket_hash char(64)`, `purpose text`, `window_start timestamptz`)
+- `purpose` — `login`, `login_pair`, `csrf` albo `refresh`
+- `count integer not null` — co najmniej 0
+- `created_at timestamptz not null`
+- `updated_at timestamptz not null`
+
+Podbicie licznika jest jednym `INSERT ... ON CONFLICT DO UPDATE`. RLS jak przy sesji konta.
+
 ### `customers`
 
 Dane klienta sklepu. Gość może kupić bez konta.
@@ -464,6 +510,7 @@ Ważność wynosi 24 godziny. Indeks na `expires_at` służy usuwaniu starych wi
 
 - `auth.users` 1:1 `profiles`
 - `auth.users` 1:N `user_roles`
+- `auth.users` 1:N `account_sessions`
 - `auth.users` 0:1 `customers` na MVP
 - `customers` 1:N `customer_addresses` — tabela adresów jeszcze bez migracji
 - `categories` 1:N `products`
@@ -481,9 +528,9 @@ Usunięcie konta kasuje profil, role, koszyk i klucze idempotencji tego konta. K
 
 ## 9. RLS i dostęp
 
-RLS jest włączone na każdej tabeli z obecnych migracji. Tabele jeszcze bez migracji dostaną RLS razem ze swoją migracją. Express, przez `service_role`, i tak omija RLS, więc uprawnienia sprawdza jawnie w API. RLS nie zastępuje tej kontroli.
+RLS jest włączone na każdej tabeli z obecnych migracji. Tabele jeszcze bez migracji dostaną RLS razem ze swoją migracją. Express łączy się rolą z `DATABASE_URL`, nie rolą `service_role` i nie kluczem `SUPABASE_SERVICE_ROLE_KEY`. Na lokalnej bazie ta rola to `postgres`: właściciel tabel, z `BYPASSRLS`, więc RLS jej nie ogranicza. Uprawnienia do zasobów użytkownika API sprawdza jawnie w zapytaniach. RLS nie zastępuje tej kontroli.
 
-`anon` i `authenticated` nie mają `INSERT`, `UPDATE` ani `DELETE` na tych tabelach.
+`anon` i `authenticated` nie mają `INSERT`, `UPDATE` ani `DELETE` na tych tabelach. Do `account_sessions`, `login_challenges` i `auth_attempt_counters` nie mają też `SELECT`. To samo dotyczy `service_role`, mimo że ta rola ma `BYPASSRLS`. Domyślne uprawnienia schematu `public` nadają jej prawa przy tworzeniu tabeli. Migracja `20261120160000_revoke_session_table_api_grants.sql` je odbiera. Domyślne uprawnienia nie nadają ich ponownie istniejącej tabeli. Nie ma widoku, funkcji ani publikacji, które wystawiają te trzy tabele przez API Supabase.
 
 Odczyt przez PostgREST, jako dodatkowa warstwa:
 
@@ -517,6 +564,8 @@ Zastosowane lokalnie, w tej kolejności:
 10. `20261118100300_inventory_reservations.sql` — `inventory_reservations` oraz klucze `(id, product_id)` i `(id, payment_method)`.
 11. `20261119120000_payment_initialization.sql` — `payments.initialization_status` i `payments.redirect_token` dla Przelewy24.
 12. `20261120120000_order_guest_session.sql` — `orders.session_id` dla skrótu sesji gościa, bez uzupełniania starych wierszy.
+13. `20261120140000_account_sessions.sql` — `account_sessions`, `login_challenges`, `auth_attempt_counters`. Bez tras logowania.
+14. `20261120160000_revoke_session_table_api_grants.sql` — odebranie `service_role` uprawnień do tych trzech tabel. Rola z `DATABASE_URL` zostaje.
 
 RLS i indeksy tych tabel powstały razem z nimi.
 

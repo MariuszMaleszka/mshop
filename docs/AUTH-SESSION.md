@@ -1,6 +1,6 @@
 # Sesja konta, BFF i ochrona logowania
 
-Ten dokument jest jedyną szczegółową specyfikacją sesji. Opisuje zaakceptowany kierunek. Nie jest zaimplementowany i wymaga osobnej zgody przed rozpoczęciem prac. Nie zmienia obecnego kontraktu `requireAuth` ani `requireAdmin`. Checkout i Przelewy24 są poza zakresem.
+Ten dokument jest jedyną szczegółową specyfikacją sesji. Tabele `account_sessions`, `login_challenges` i `auth_attempt_counters` oraz szyfrowanie AES-256-GCM są w repozytorium. Logowanie, odświeżenie, wylogowanie, bootstrap CSRF i BFF nadal nie są zaimplementowane i wymagają osobnej zgody przed rozpoczęciem prac. Nie zmienia obecnego kontraktu `requireAuth` ani `requireAdmin`. Checkout i Przelewy24 są poza zakresem.
 
 Supabase Auth zostaje źródłem tożsamości. Administrator nie dostaje osobnego konta. Rola jest czytana z `public.user_roles` przy każdym żądaniu Expressa. Przeglądarka nie zapisuje tokenów w `localStorage` ani `sessionStorage`. Proces Nuxt i proces Express nie trzymają sesji użytkowników w zmiennych globalnych.
 
@@ -28,7 +28,7 @@ Jedna przeglądarka ma jedno ciasteczko sesji konta. Logowanie w tej przeglądar
 
 ## 3. Gdzie leżą sekrety
 
-Access token i refresh token leżą w wierszu PostgreSQL, zaszyfrowane AES-256-GCM kluczem procesu. Wektor jest losowany przy każdym zapisie. Identyfikator sesji w bazie występuje tylko jako SHA-256.
+Access token i refresh token leżą w wierszu PostgreSQL, zaszyfrowane AES-256-GCM kluczem procesu. Wektor jest losowany przy każdym zapisie. Identyfikator sesji w bazie występuje tylko jako SHA-256. Klucz ma 32 bajty i przychodzi ze zmiennej procesu `SESSION_TOKEN_KEY` jako standardowe base64. Pusta wartość jest dozwolona, dopóki logowanie nie jest podłączone. Sposób lokalnego wygenerowania jest w `.env.example`. Ta zmienna nie wchodzi do publicznej konfiguracji Nuxt.
 
 Ciasteczko sesji konta niesie wyłącznie losowy identyfikator. Produkcyjna nazwa to `__Host-mshop_session`: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, bez `Domain`. Lokalny HTTP nie spełnia warunków `__Host-` ani `Secure`. Tam nazwa to `mshop_session`, bez `Secure`.
 
