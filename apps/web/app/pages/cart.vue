@@ -83,29 +83,19 @@ function applyCart(result) {
   <main>
     <h1>Koszyk</h1>
     <p><a href="/">Sklep</a></p>
-    <p v-if="loading">
-      Ładowanie koszyka.
-    </p>
+    <p v-if="loading">Ładowanie koszyka.</p>
     <p v-if="errorMessage">
       {{ errorMessage }}
     </p>
-    <p v-if="!loading && cart && cart.items.length === 0">
-      Koszyk jest pusty.
-    </p>
+    <p v-if="!loading && cart && cart.items.length === 0">Koszyk jest pusty.</p>
     <ul v-if="cart && cart.items.length > 0">
-      <li
-        v-for="item in cart.items"
-        :key="item.id"
-      >
+      <li v-for="item in cart.items" :key="item.id">
         <h2>{{ item.name }}</h2>
         <p>{{ formatAmount(item.price_amount, item.currency) }}</p>
         <p>{{ formatAmount(item.line_amount, item.currency) }}</p>
         <label>
           Ilość
-          <input
-            v-model="quantities[item.id]"
-            inputmode="numeric"
-          >
+          <input v-model="quantities[item.id]" inputmode="numeric" />
         </label>
         <button
           type="button"

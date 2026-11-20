@@ -63,9 +63,7 @@ async function addProduct(product) {
   <main>
     <h1>Sklep</h1>
     <p><a href="/cart">Koszyk</a></p>
-    <p v-if="loading">
-      Ładowanie katalogu.
-    </p>
+    <p v-if="loading">Ładowanie katalogu.</p>
     <p v-if="errorMessage">
       {{ errorMessage }}
     </p>
@@ -76,10 +74,7 @@ async function addProduct(product) {
       Brak produktów.
     </p>
     <ul v-if="products.length > 0">
-      <li
-        v-for="product in products"
-        :key="product.id"
-      >
+      <li v-for="product in products" :key="product.id">
         <h2>{{ product.name }}</h2>
         <p v-if="product.description">
           {{ product.description }}
