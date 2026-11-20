@@ -85,7 +85,7 @@ Licznik okna. Klucz nie zawiera jawnego adresu ani e-maila.
 - `created_at timestamptz not null`
 - `updated_at timestamptz not null`
 
-Podbicie licznika jest jednym `INSERT ... ON CONFLICT DO UPDATE`. RLS jak przy sesji konta.
+Zapis z progiem jest jednym `INSERT ... ON CONFLICT DO UPDATE` z warunkiem `count < próg`. Brak aktualizacji oznacza odmowę i nie podnosi licznika. `window_start` jest granicą okna 15 minut liczoną w PostgreSQL. `bucket_hash` to HMAC-SHA-256, nie jawny adres, e-mail ani identyfikator sesji. Zamknięte okno usuwa osobna funkcja, gdy `window_start` plus 15 minut już minęło. Bieżącego okna nie rusza. Workera tej funkcji jeszcze nie ma. RLS jak przy sesji konta.
 
 ### `customers`
 

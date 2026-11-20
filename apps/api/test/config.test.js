@@ -37,6 +37,7 @@ describe('loadConfig', () => {
       supabaseAnonKey: null,
       supabaseServiceRoleKey: null,
       sessionTokenKey: null,
+      rateLimitHmacKey: null,
       p24: null,
     })
   })
@@ -169,6 +170,34 @@ describe('loadConfig', () => {
 
     assert.match(error.message, /SESSION_TOKEN_KEY/)
     assert.equal(error.message.includes('not-a-key'), false)
+  })
+
+  it('accepts a 32-byte rate limit key and rejects a short one', () => {
+    const key = randomBytes(32)
+    const config = loadConfig({
+      NODE_ENV: 'test',
+      RATE_LIMIT_HMAC_KEY: key.toString('base64'),
+    })
+
+    assert.equal(config.rateLimitHmacKey.equals(key), true)
+
+    const error = configError({
+      NODE_ENV: 'test',
+      RATE_LIMIT_HMAC_KEY: 'not-a-key',
+    })
+
+    assert.match(error.message, /RATE_LIMIT_HMAC_KEY/)
+    assert.equal(error.message.includes('not-a-key'), false)
+  })
+
+  it('rejects an all-zero rate limit key in production', () => {
+    const error = configError({
+      ...productionBase,
+      RATE_LIMIT_HMAC_KEY: Buffer.alloc(32).toString('base64'),
+    })
+
+    assert.match(error.message, /RATE_LIMIT_HMAC_KEY/)
+    assert.equal(error.message.includes('AAAA'), false)
   })
 
   it('rejects an all-zero session token key in production', () => {

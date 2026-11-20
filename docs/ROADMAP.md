@@ -57,13 +57,13 @@ Acceptance spełnione dla zastosowanych migracji:
 Jeszcze otwarte: seed demonstracyjny całego sklepu nie istnieje. Lokalny skrypt katalogu nie nadaje roli `admin`, nie zawiera sekretów i nie zastępuje tego seeda.
 
 ## Phase 3 — Authentication & authorization
-Konfiguracja środowiska API, obsługa błędów HTTP, pula PostgreSQL, weryfikacja JWT, rola `admin` oraz walidacja żądań Zod są ukończone. Logowanie i sesja Nuxt nie są rozpoczęte. Szczegóły sesji, czasy i test wyścigu są tylko w `docs/AUTH-SESSION.md`. Ten dokument nie jest zgodą na implementację.
+Konfiguracja środowiska API, obsługa błędów HTTP, pula PostgreSQL, weryfikacja JWT, rola `admin` oraz walidacja żądań Zod są ukończone. W repozytorium są tabele sesji, szyfr tokenów i limiter PostgreSQL. Logowanie, ciasteczka i sesja Nuxt nie są rozpoczęte. Szczegóły sesji, czasy i test wyścigu są tylko w `docs/AUTH-SESSION.md`. Ten dokument nie jest zgodą na dalszą implementację.
 
 - [x] Scentralizować konfigurację API i walidować zmienne środowiskowe przez Zod.
 - [x] Ujednolicić błędy HTTP, identyfikator żądania i logowanie bez sekretów.
 - [x] Dodać pulę `pg`, zamknięcie procesu i `GET /api/v1/health/ready`.
 - [ ] Skonfigurować Supabase Auth.
-- [ ] Sesja konta według `docs/AUTH-SESSION.md`, po osobnej zgodzie. Do tego czasu zostaje obecny Bearer oraz `requireAuth` i `requireAdmin`.
+- [ ] Sesja konta według `docs/AUTH-SESSION.md`, po osobnej zgodzie. Tabele, szyfr i limiter już są. Brakuje logowania, odświeżenia, wylogowania i BFF. Do tego czasu zostaje obecny Bearer oraz `requireAuth` i `requireAdmin`.
 - [ ] Google OAuth.
 - [ ] Apple OAuth.
 - [ ] Odzyskiwanie hasła.

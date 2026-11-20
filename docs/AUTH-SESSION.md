@@ -1,6 +1,6 @@
 # Sesja konta, BFF i ochrona logowania
 
-Ten dokument jest jedyną szczegółową specyfikacją sesji. Tabele `account_sessions`, `login_challenges` i `auth_attempt_counters` oraz szyfrowanie AES-256-GCM są w repozytorium. Logowanie, odświeżenie, wylogowanie, bootstrap CSRF i BFF nadal nie są zaimplementowane i wymagają osobnej zgody przed rozpoczęciem prac. Nie zmienia obecnego kontraktu `requireAuth` ani `requireAdmin`. Checkout i Przelewy24 są poza zakresem.
+Ten dokument jest jedyną szczegółową specyfikacją sesji. Tabele `account_sessions`, `login_challenges` i `auth_attempt_counters`, szyfrowanie AES-256-GCM oraz limiter PostgreSQL są w repozytorium. Żadna trasa jeszcze tego limitera nie woła. Logowanie, odświeżenie, wylogowanie, bootstrap CSRF i BFF nadal nie są zaimplementowane i wymagają osobnej zgody przed rozpoczęciem prac. Nie zmienia obecnego kontraktu `requireAuth` ani `requireAdmin`. Checkout i Przelewy24 są poza zakresem.
 
 Supabase Auth zostaje źródłem tożsamości. Administrator nie dostaje osobnego konta. Rola jest czytana z `public.user_roles` przy każdym żądaniu Expressa. Przeglądarka nie zapisuje tokenów w `localStorage` ani `sessionStorage`. Proces Nuxt i proces Express nie trzymają sesji użytkowników w zmiennych globalnych.
 
@@ -56,7 +56,7 @@ To nie daje atomowości z Supabase. Zużycie wyzwania przed odpowiedzią Auth oz
 
 ## 5. Adres IP i limiter
 
-Dziś `apps/api` nie wywołuje `trust proxy`. Express bierze adres z połączenia TCP. Nagłówek `X-Forwarded-For` nie wybiera adresu, bo aplikacja go nie czyta.
+Dziś `apps/api` nie wywołuje `trust proxy`. Express bierze adres z połączenia TCP. Nagłówek `X-Forwarded-For` nie wybiera adresu, bo aplikacja go nie czyta. Limiter nie czyta gniazda ani nagłówków. Dostaje adres od przyszłego wywołującego. Ten etap nie dodaje `trust proxy`, listy `BFF_TRUSTED_PEERS` ani odczytu `X-Mshop-Client-Ip`.
 
 Logowanie i bootstrap idą z przeglądarki do Nuxt, a dopiero Nuxt woła Express. Express widzi więc adres procesu Nuxt, nie adres przeglądarki. Adres do licznika ustala Nuxt i przekazuje go w nagłówku `X-Mshop-Client-Ip`.
 
@@ -175,7 +175,7 @@ Sprzątanie jest instrukcją `DELETE` z jawnym warunkiem czasu. Może ją wykona
 
 - Sesja `ready` schodzi, gdy minęło 12 godzin albo 30 minut bezczynności. Wiersz `unknown` schodzi od razu. Wiersz `pending` schodzi dopiero po 15 sekundach. Młodszy `pending` zostaje.
 - Wyzwanie schodzi, gdy minęło 10 minut. Niewygasłe zostaje.
-- Okno licznika schodzi, gdy jest starsze niż 15 minut. Bieżące okno zostaje.
+- Okno licznika schodzi, gdy `window_start` plus 15 minut jest już w przeszłości. Bieżące okno zostaje. Robi to `deleteClosedAuthAttemptWindows`. Workera jeszcze nie ma. Przyszły worker może wołać tę funkcję co 5 minut. Powtórzenie jest nieszkodliwe i nie rusza otwartego okna.
 - Zdarzenie schodzi po 30 dniach.
 
 Żądanie, które na starcie zastaje sesję po bezczynności albo po 12 godzinach, nie woła Supabase. Gdy wiersz nie jest młodym `pending`, kasuje go i zwraca 401. Dokończenie żądania rozpoczętego wcześniej opisuje sekcja o wylogowaniu. Zapis pary po terminie sesji nie przechodzi, bo wymaga obu terminów w przyszłości. Sprzątanie nie kasuje `pending` młodszego niż 15 sekund. Późniejsza para nie tworzy wiersza na nowo.
@@ -194,18 +194,26 @@ Gdy `INSERT` się uda, a Nuxt nie ustawi ciasteczka, Nuxt woła skasowanie tego 
 
 ## 12. Limity
 
-Publiczne logowanie i bootstrap CSRF nie powstają wcześniej niż limiter. W jednym wdrożeniu obie trasy są rejestrowane dopiero wtedy, gdy odczyt i zapis liczników działają. Test musi pokazać, że przy awarii limitera Supabase nie jest wołane.
+Publiczne logowanie i bootstrap CSRF nie powstają wcześniej niż limiter. W jednym wdrożeniu obie trasy są rejestrowane dopiero wtedy, gdy odczyt i zapis liczników działają. Test musi pokazać, że przy awarii limitera Supabase nie jest wołane. Sam mechanizm już jest. Tras nadal nie ma.
 
-Stan liczników jest w PostgreSQL, wspólny dla instancji. Klucze to skróty, bez adresu e-mail i bez IP w postaci jawnej.
+Stan liczników jest w PostgreSQL, wspólny dla instancji. W tabeli leży HMAC-SHA-256, nie adres, e-mail ani identyfikator sesji. Klucz HMAC to osobna zmienna `RATE_LIMIT_HMAC_KEY`, 32 bajty w standardowym base64. Nie jest to `SESSION_TOKEN_KEY` i nie wchodzi do publicznej konfiguracji Nuxt. Pusta wartość nie zatrzymuje API. Wywołanie limitera bez poprawnego klucza kończy się błędem i nie oznacza zgody.
 
-| Licznik | Klucz | Próg projektu | Okno |
-| --- | --- | --- | --- |
-| Logowanie z jednego adresu | skrót IP i celu `login` | 30 | 15 minut |
-| Logowanie pary adres i konto | skrót IP, znormalizowanego e-maila i celu `login` | 10 | 15 minut |
-| Bootstrap CSRF | skrót IP i celu `csrf` | 60 | 15 minut |
-| Odświeżenie jednej sesji | skrót identyfikatora sesji, tylko realne wywołanie Supabase | 30 | 15 minut |
+Pola wejściowe są kodowane długością w bajtach, więc sklejenie sąsiednich wartości nie tworzy drugiego, takiego samego kubełka. E-mail jest obcinany ze skrajnych spacji, składany do NFC i zamieniany na małe litery. Kropki i aliasy po `+` zostają. Nie ma reguł jednego dostawcy poczty. Adres IPv4 i IPv6 są sprowadzane do jednej postaci, a `::ffff:a.b.c.d` liczy się jak `a.b.c.d`. Identyfikator sesji wchodzi bez obcinania spacji. Pusty identyfikator i identyfikator dłuższy niż 512 znaków są odrzucane.
 
-Nie ma globalnej blokady samego e-maila. Taka blokada pozwoliłaby z jednego adresu odebrać logowanie właścicielowi będącemu gdzie indziej. Licznik pary podnosi się także wtedy, gdy konta nie ma, i zawsze przed wywołaniem Supabase.
+| Licznik | Wywołanie | Klucz | Próg | Okno |
+| --- | --- | --- | --- | --- |
+| Logowanie z jednego adresu | `consumeLoginRateLimit` | HMAC celu `login` i IP | 30 | 15 minut |
+| Logowanie pary adres i konto | `consumeLoginPairRateLimit` | HMAC celu `login_pair`, IP i znormalizowanego e-maila | 10 | 15 minut |
+| Bootstrap CSRF | `consumeCsrfRateLimit` | HMAC celu `csrf` i IP | 60 | 15 minut |
+| Odświeżenie jednej sesji | `consumeRefreshRateLimit` | HMAC celu `refresh` i identyfikatora sesji | 30 | 15 minut |
+
+`purpose` w bazie ma wartość `login_pair`, nie `login`. Nie ma globalnej blokady samego e-maila. Licznik pary podnosi się także wtedy, gdy konta nie ma, i zawsze przed wywołaniem Supabase. `consumeRefreshRateLimit` woła się tylko przed rzeczywistym wywołaniem Auth. Samo sprawdzenie sesji, młody `pending`, stan `unknown` i każde żądanie, które nie woła Auth, tego licznika nie podnosi.
+
+Okno ma 15 minut i jest wyrównane do stałych granic od epoki. `window_start` liczy PostgreSQL przez `date_bin`, więc instancje nie biorą czasu ze swoich zegarów. Zapis to jedno `INSERT ... ON CONFLICT DO UPDATE`, a przyrost ma warunek `count < próg`. Żądanie, które dostaje wiersz z `RETURNING`, jest dozwolone. Próg włącznie jest dozwolony. Brak wiersza w `RETURNING` oznacza odmowę. Odmowa nie zwiększa licznika i go nie zeruje. Równoległe żądania serializują się na konflikcie wiersza, więc nie przechodzą wszystkie tylko dlatego, że każde zdążyło zobaczyć wartość poniżej progu.
+
+Błąd bazy, przerwana operacja i brak albo zły klucz dają `AuthRateLimitError`. To nie jest wynik „limit przekroczony” i nie wolno po nim wołać Supabase. Przekroczenie progu jest zwykłym wynikiem `{ allowed: false }`.
+
+Udane logowanie kasuje tylko bieżące okno pary, funkcją `clearLoginPairRateLimit`. Licznik samego IP zostaje do końca okna. Stare okna usuwa `deleteClosedAuthAttemptWindows`, nie pamięć procesu.
 
 Odpowiedzi:
 
@@ -213,8 +221,6 @@ Odpowiedzi:
 - Przekroczony próg IP albo pary: HTTP 429, ten sam komunikat „Spróbuj ponownie później.” Treść nie wskazuje, który licznik zadziałał.
 - Odrzucone wyzwanie, origin albo referer: HTTP 403, komunikat „Formularz logowania wygasł.” Supabase nie jest wołane.
 - Awaria bazy limitera albo zapis licznika się nie uda: HTTP 503, komunikat „Logowanie jest chwilowo niedostępne.” Hasło nie idzie dalej. Brak licznika nie oznacza zgody.
-
-Udane logowanie kasuje licznik pary dla tego IP i e-maila. Licznik samego IP zostaje do końca okna. Stare okna są usuwane po czasie, nie trzymane w pamięci procesu.
 
 ## 13. CSRF po zalogowaniu
 
@@ -258,8 +264,8 @@ Moduł `nuxt-security` jest w katalogu Nuxt i obsługuje nonce, ale jego domyśl
 
 ## 15. Kolejność wdrożenia
 
-1. Tabele wyzwań, sesji i liczników. Brak publicznych tras.
-2. Limiter w Expressie i testy awarii bazy. Nadal brak logowania. Test podmiany `X-Forwarded-For` oraz `X-Mshop-Client-Ip` bez zaufanego peera nie zmienia kubełka.
+1. Zrobione: tabele wyzwań, sesji i liczników. Brak publicznych tras.
+2. Zrobione: limiter w Expressie i test awarii bazy. Nadal brak logowania. Test podmiany `X-Forwarded-For` oraz `X-Mshop-Client-Ip` zostaje na etap, który ustala adres klienta. Ten etap adresu nie czyta.
 3. Bootstrap CSRF i logowanie w jednym wdrożeniu, oba za limiterem. Bez działającego limitera trasy nie są rejestrowane.
 4. Odświeżenie ze stanem `pending` / `unknown`, zapis warunkowy po `refresh_generation` oraz wylogowanie. Test wyścigu nie odtwarza skasowanego wiersza.
 5. Odczyt panelu zamówień przez Nuxt. Express nadal sprawdza Bearer, `requireAuth` i `requireAdmin`.

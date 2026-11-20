@@ -54,7 +54,7 @@ Przed rozpoczęciem kolejnego zadania:
 - Nie zwracać `SELECT *` z publicznych endpointów.
 - Błędy API mają bezpieczny, wspólny format. Nie ujawniać stack trace, SQL, connection stringów, tokenów, haseł ani danych żądania.
 - Nie logować tokenów, cookie, sekretów, request body ani danych osobowych.
-- Sesja konta nie jest zaimplementowana. Jedyny opis jest w `docs/AUTH-SESSION.md`. Bez osobnej zgody nie wolno jej wdrażać. Gość zostaje przy `shop_guest_session`. Administrator nie dostaje osobnej tożsamości.
+- Tabele sesji, szyfr AES-256-GCM i limiter PostgreSQL są w repozytorium. Opis jest w `docs/AUTH-SESSION.md`. Logowania, odświeżenia, wylogowania, CSRF, ciasteczek i BFF nie ma. Bez osobnej zgody nie wolno wystawiać tych tras. Gość zostaje przy `shop_guest_session`. Administrator nie dostaje osobnej tożsamości.
 
 ## 4. Założenia biznesowe MVP
 
@@ -222,4 +222,4 @@ Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` są 
 
 Przy wznowieniu sprawdź `pnpm exec supabase migration list`. W repozytorium po rezerwacjach jest też `20261119120000_payment_initialization.sql`. Szczegóły kolumn są w `docs/DATABASE.md`.
 
-Następny etap wybiera użytkownik. Bez osobnej zgody nie implementuj `docs/AUTH-SESSION.md`, nie wystawiaj logowania i nie dodawaj tabel sesji. Bez osobnej zgody nie włączaj produkcyjnego checkoutu online, nie powtarzaj `transaction/register` ani `transaction/verify` i nie obchodź blokad `SELLER_TAX_STATUS_UNKNOWN` oraz `VAT_POLICY_NOT_CONFIRMED`. Nie uzupełniaj `shop_profile`, nie zmieniaj `seller_tax_status` i nie wybieraj `per_line` ani `per_rate` jako polityki sprzedaży. Nie dodawaj outboxa, dostawcy faktur, kuriera, fiskalizacji ani poczty tylko dlatego, że `docs/INTEGRATIONS.md` opisuje kierunek. Decyzje z sekcji 9 zostają do konsultacji z księgowym. Katalog, koszyk gościa, checkout gotówkowy i odczyt jednego zamówienia już są. Nie implementuj ich od nowa.
+Następny etap wybiera użytkownik. Tabele sesji, szyfr i limiter już są. Bez osobnej zgody nie wystawiaj logowania, odświeżenia, wylogowania ani BFF i nie dodawaj kolejnych tabel sesji. Bez osobnej zgody nie włączaj produkcyjnego checkoutu online, nie powtarzaj `transaction/register` ani `transaction/verify` i nie obchodź blokad `SELLER_TAX_STATUS_UNKNOWN` oraz `VAT_POLICY_NOT_CONFIRMED`. Nie uzupełniaj `shop_profile`, nie zmieniaj `seller_tax_status` i nie wybieraj `per_line` ani `per_rate` jako polityki sprzedaży. Nie dodawaj outboxa, dostawcy faktur, kuriera, fiskalizacji ani poczty tylko dlatego, że `docs/INTEGRATIONS.md` opisuje kierunek. Decyzje z sekcji 9 zostają do konsultacji z księgowym. Katalog, koszyk gościa, checkout gotówkowy i odczyt jednego zamówienia już są. Nie implementuj ich od nowa.

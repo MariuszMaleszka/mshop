@@ -30,6 +30,7 @@ const envSchema = z
     SUPABASE_ANON_KEY: z.string().optional(),
     SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
     SESSION_TOKEN_KEY: z.string().optional(),
+    RATE_LIMIT_HMAC_KEY: z.string().optional(),
     P24_ENVIRONMENT: z.string().optional(),
     P24_MERCHANT_ID: z.string().optional(),
     P24_POS_ID: z.string().optional(),
@@ -65,6 +66,7 @@ function readEnv(env) {
     SUPABASE_ANON_KEY: blankToUndefined(env?.SUPABASE_ANON_KEY),
     SUPABASE_SERVICE_ROLE_KEY: blankToUndefined(env?.SUPABASE_SERVICE_ROLE_KEY),
     SESSION_TOKEN_KEY: blankToUndefined(env?.SESSION_TOKEN_KEY),
+    RATE_LIMIT_HMAC_KEY: blankToUndefined(env?.RATE_LIMIT_HMAC_KEY),
     P24_ENVIRONMENT: blankToUndefined(env?.P24_ENVIRONMENT),
     P24_MERCHANT_ID: blankToUndefined(env?.P24_MERCHANT_ID),
     P24_POS_ID: blankToUndefined(env?.P24_POS_ID),
@@ -260,28 +262,32 @@ function readSupabaseUrl(value, nodeEnv, ctx) {
 }
 
 function readSessionTokenKey(value, nodeEnv, ctx) {
+  return readEncodedKey(value, 'SESSION_TOKEN_KEY', nodeEnv, ctx)
+}
+
+function readRateLimitHmacKey(value, nodeEnv, ctx) {
+  return readEncodedKey(value, 'RATE_LIMIT_HMAC_KEY', nodeEnv, ctx)
+}
+
+function readEncodedKey(value, field, nodeEnv, ctx) {
   if (!value) {
     return null
   }
 
   if (!/^[A-Za-z0-9+/]{43}=$/.test(value)) {
-    addIssue(ctx, 'SESSION_TOKEN_KEY')
+    addIssue(ctx, field)
     return null
   }
 
   const key = Buffer.from(value, 'base64')
 
   if (key.length !== 32 || key.toString('base64') !== value) {
-    addIssue(ctx, 'SESSION_TOKEN_KEY')
+    addIssue(ctx, field)
     return null
   }
 
   if (nodeEnv === 'production' && key.every((byte) => byte === 0)) {
-    addIssue(
-      ctx,
-      'SESSION_TOKEN_KEY',
-      'must not use a placeholder in production',
-    )
+    addIssue(ctx, field, 'must not use a placeholder in production')
     return null
   }
 
@@ -570,6 +576,11 @@ const configSchema = envSchema.transform((env, ctx) => {
     resolvedEnv,
     ctx,
   )
+  const rateLimitHmacKey = readRateLimitHmacKey(
+    env.RATE_LIMIT_HMAC_KEY,
+    resolvedEnv,
+    ctx,
+  )
   const p24 = readP24Config(env, resolvedEnv, ctx)
 
   return {
@@ -584,6 +595,7 @@ const configSchema = envSchema.transform((env, ctx) => {
     supabaseAnonKey,
     supabaseServiceRoleKey,
     sessionTokenKey,
+    rateLimitHmacKey,
     p24,
   }
 })
