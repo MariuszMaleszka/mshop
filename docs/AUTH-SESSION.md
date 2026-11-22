@@ -1,6 +1,6 @@
 # Sesja konta, BFF i ochrona logowania
 
-Ten dokument jest jedyną szczegółową specyfikacją sesji. Tabele `account_sessions`, `login_challenges` i `auth_attempt_counters`, szyfrowanie AES-256-GCM oraz limiter PostgreSQL są w repozytorium. Żadna trasa jeszcze tego limitera nie woła. Logowanie, odświeżenie, wylogowanie, bootstrap CSRF i BFF nadal nie są zaimplementowane i wymagają osobnej zgody przed rozpoczęciem prac. Nie zmienia obecnego kontraktu `requireAuth` ani `requireAdmin`. Checkout i Przelewy24 są poza zakresem.
+Ten dokument jest jedyną szczegółową specyfikacją sesji. Tabele `account_sessions`, `login_challenges` i `auth_attempt_counters`, szyfrowanie AES-256-GCM oraz limiter PostgreSQL są w repozytorium. Limiter CSRF woła wyłącznie wewnętrzne wydanie wyzwania. `POST /api/v1/auth/csrf` na Nuxt i `POST /api/v1/internal/login-challenges` na Expressie wydają wyzwanie. Logowanie, odświeżenie, wylogowanie i zużycie wyzwania nadal nie są zaimplementowane. Nie zmienia obecnego kontraktu `requireAuth` ani `requireAdmin`. Checkout i Przelewy24 są poza zakresem.
 
 Supabase Auth zostaje źródłem tożsamości. Administrator nie dostaje osobnego konta. Rola jest czytana z `public.user_roles` przy każdym żądaniu Expressa. Przeglądarka nie zapisuje tokenów w `localStorage` ani `sessionStorage`. Proces Nuxt i proces Express nie trzymają sesji użytkowników w zmiennych globalnych.
 
@@ -56,15 +56,15 @@ To nie daje atomowości z Supabase. Zużycie wyzwania przed odpowiedzią Auth oz
 
 ## 5. Adres IP i limiter
 
-Dziś `apps/api` nie wywołuje `trust proxy`. Express bierze adres z połączenia TCP. Nagłówek `X-Forwarded-For` nie wybiera adresu, bo aplikacja go nie czyta. Limiter nie czyta gniazda ani nagłówków. Dostaje adres od przyszłego wywołującego. Ten etap nie dodaje `trust proxy`, listy `BFF_TRUSTED_PEERS` ani odczytu `X-Mshop-Client-Ip`.
+Dziś `apps/api` nie wywołuje `trust proxy`. Express bierze adres z połączenia TCP. Nagłówek `X-Forwarded-For` nie wybiera adresu, bo aplikacja go nie czyta. Limiter nie czyta gniazda ani nagłówków. Dostaje adres od przyszłego wywołującego. Sekret `BFF_INTERNAL_SECRET` i lista `BFF_TRUSTED_PEERS` są w konfiguracji. Woła je tylko `POST /api/v1/internal/login-challenges`. Pusta lista i brak sekretu nie zatrzymują startu API. `trust proxy` pozostaje wyłączone.
 
 Logowanie i bootstrap idą z przeglądarki do Nuxt, a dopiero Nuxt woła Express. Express widzi więc adres procesu Nuxt, nie adres przeglądarki. Adres do licznika ustala Nuxt i przekazuje go w nagłówku `X-Mshop-Client-Ip`.
 
 Nuxt ignoruje `X-Forwarded-For`, dopóki bezpośredni peer nie jest na jawnej liście zaufanych proxy. Lewy adres z tego nagłówka nie jest adresem klienta: dopisuje go nadawca, zanim żądanie dotrze do proxy. Przy jednym zaufanym proxy Nuxt bierze adres, który to proxy dopisało jako ostatni. Lista pusta oznacza, że adresem jest peer gniazda. `trust proxy = true` jest niedozwolone i w produkcji, i lokalnie.
 
-Express przyjmuje `X-Mshop-Client-Ip` tylko razem z sekretem wewnętrznym i tylko wtedy, gdy peer TCP jest na liście `BFF_TRUSTED_PEERS`. Inaczej używa peer TCP i nagłówek pomija. Przeglądarka, która sama wyśle ten nagłówek albo `X-Forwarded-For` do Expressa, nie wybiera sobie kubełka limitera.
+Weryfikacja wewnętrznego wywołania jest w `apps/api/src/http/internal-call.js`. Przyjmuje `X-Mshop-Client-Ip` tylko po sprawdzeniu peera TCP z listy `BFF_TRUSTED_PEERS`, a dopiero potem sekretu z nagłówka `X-Mshop-Internal-Secret`. Niezaufany peer, zły sekret, brak adresu i adres niekanoniczny odrzucają wywołanie. Adres procesu Nuxt nie zastępuje adresu przeglądarki. Zwykłe trasy API tej funkcji nie wołają, więc nagłówek wysłany wprost przez przeglądarkę nie wybiera kubełka limitera.
 
-Lokalnie lista peerów to `127.0.0.1` i `::1`. W produkcji lista startuje pusta. Hostingu i load balancera to repozytorium nie nazywa. Logowanie za proxy nie rusza, dopóki operator nie wpisze adresów tego proxy. Bez tej listy wszyscy użytkownicy za jednym proxy wpadliby do jednego kubełka albo, przy naiwnym zaufaniu do nagłówka, klient sam wybierałby adres. Wiele instancji Nuxt i Express dzieli te same wiersze PostgreSQL. Kubełek zależy od adresu ustalonego tą regułą, nie od numeru instancji i nie od pamięci procesu.
+Zmienna startuje pusta w każdym środowisku. Pusta lista odrzuca wewnętrzne wywołanie. Lokalnie operator wpisuje `127.0.0.1` i `::1`. W produkcji zostawia listę pustą, dopóki nie poda dokładnych adresów procesu Nuxt. Hostingu i load balancera to repozytorium nie nazywa. Logowanie za proxy nie rusza, dopóki operator nie wpisze adresów tego proxy. Bez tej listy wszyscy użytkownicy za jednym proxy wpadliby do jednego kubełka albo, przy naiwnym zaufaniu do nagłówka, klient sam wybierałby adres. Wiele instancji Nuxt i Express dzieli te same wiersze PostgreSQL. Kubełek zależy od adresu ustalonego tą regułą, nie od numeru instancji i nie od pamięci procesu.
 
 ## 6. Odświeżenie i przerwana rotacja
 
@@ -213,7 +213,7 @@ Okno ma 15 minut i jest wyrównane do stałych granic od epoki. `window_start` l
 
 Błąd bazy, przerwana operacja i brak albo zły klucz dają `AuthRateLimitError`. To nie jest wynik „limit przekroczony” i nie wolno po nim wołać Supabase. Przekroczenie progu jest zwykłym wynikiem `{ allowed: false }`.
 
-Udane logowanie kasuje tylko bieżące okno pary, funkcją `clearLoginPairRateLimit`. Licznik samego IP zostaje do końca okna. Stare okna usuwa `deleteClosedAuthAttemptWindows`, nie pamięć procesu.
+Żaden z czterech liczników nie jest kasowany po udanej próbie. Każdy zostaje do końca swojego okna. Zamknięte okna usuwa `deleteClosedAuthAttemptWindows`, nie pamięć procesu.
 
 Odpowiedzi:
 
@@ -265,7 +265,7 @@ Moduł `nuxt-security` jest w katalogu Nuxt i obsługuje nonce, ale jego domyśl
 ## 15. Kolejność wdrożenia
 
 1. Zrobione: tabele wyzwań, sesji i liczników. Brak publicznych tras.
-2. Zrobione: limiter w Expressie i test awarii bazy. Nadal brak logowania. Test podmiany `X-Forwarded-For` oraz `X-Mshop-Client-Ip` zostaje na etap, który ustala adres klienta. Ten etap adresu nie czyta.
+2. Zrobione: limiter w Expressie i test awarii bazy. Nadal brak logowania. Weryfikacja wewnętrznego wywołania odrzuca podrobiony `X-Forwarded-For` i adres peera spoza listy. Żadna trasa nie przekazuje jeszcze tego adresu do limitera.
 3. Bootstrap CSRF i logowanie w jednym wdrożeniu, oba za limiterem. Bez działającego limitera trasy nie są rejestrowane.
 4. Odświeżenie ze stanem `pending` / `unknown`, zapis warunkowy po `refresh_generation` oraz wylogowanie. Test wyścigu nie odtwarza skasowanego wiersza.
 5. Odczyt panelu zamówień przez Nuxt. Express nadal sprawdza Bearer, `requireAuth` i `requireAdmin`.

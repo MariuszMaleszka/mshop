@@ -9,6 +9,8 @@ import {
   findAccountSession,
   incrementAuthAttempt,
   insertAccountSession,
+  createLoginChallenge,
+  createLoginChallengeValue,
   insertLoginChallenge,
   saveRefreshedSession,
   sha256Hex,
@@ -267,6 +269,83 @@ describe('account session storage', () => {
           (error) => error?.code === '42501',
         )
       } finally {
+        await release()
+      }
+    },
+  )
+
+  it(
+    'stores a challenge as hashes with a database expiry',
+    { skip },
+    async () => {
+      const release = await holdIntegrationDatabase(databaseUrl)
+      const challengeId = createLoginChallengeValue()
+      const csrfSecret = createLoginChallengeValue()
+      const idHash = sha256Hex(challengeId)
+
+      try {
+        const result = await createLoginChallenge(database, {
+          challengeId,
+          csrfSecret,
+          expiresAt: new Date('2030-01-01T00:00:00.000Z'),
+        })
+        const stored = await database.query(
+          `
+            select id_hash,
+                   csrf_token_hash,
+                   consumed_at,
+                   extract(epoch from (expires_at - created_at)) as lifetime_seconds,
+                   extract(epoch from (created_at - now())) as created_skew_seconds
+            from public.login_challenges
+            where id_hash = $1
+          `,
+          [idHash],
+        )
+        const row = stored.rows[0]
+        const visible = JSON.stringify(row)
+
+        assert.equal(result, undefined)
+        assert.equal(row.id_hash, idHash)
+        assert.equal(row.csrf_token_hash, sha256Hex(csrfSecret))
+        assert.equal(row.consumed_at, null)
+        assert.equal(Number(row.lifetime_seconds), 600)
+        assert.ok(Math.abs(Number(row.created_skew_seconds)) < 30)
+        assert.equal(visible.includes(challengeId), false)
+        assert.equal(visible.includes(csrfSecret), false)
+        assert.equal(
+          await consumeLoginChallenge(database, {
+            idHash,
+            csrfTokenHash: sha256Hex(csrfSecret),
+          }),
+          1,
+        )
+        assert.equal(
+          await consumeLoginChallenge(database, {
+            idHash,
+            csrfTokenHash: sha256Hex(csrfSecret),
+          }),
+          0,
+        )
+
+        await assert.rejects(
+          createLoginChallenge(database, {
+            challengeId,
+            csrfSecret,
+          }),
+          (error) => {
+            assert.equal(error instanceof AccountSessionWriteError, true)
+            assert.equal(error.code, 'rejected')
+            assert.equal(error.message, 'Account session write rejected')
+            assert.equal(String(error).includes(challengeId), false)
+            assert.equal(String(error).includes(csrfSecret), false)
+            return true
+          },
+        )
+      } finally {
+        await database.query(
+          'delete from public.login_challenges where id_hash = $1',
+          [idHash],
+        )
         await release()
       }
     },

@@ -45,6 +45,10 @@ export default [
         useHead: 'readonly',
         useRoute: 'readonly',
         definePageMeta: 'readonly',
+        defineEventHandler: 'readonly',
+        getRequestHeader: 'readonly',
+        setCookie: 'readonly',
+        setResponseStatus: 'readonly',
       },
     },
     rules: {

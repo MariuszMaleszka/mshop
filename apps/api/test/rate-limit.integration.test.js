@@ -5,7 +5,6 @@ import pg from 'pg'
 import {
   AUTH_RATE_LIMITS,
   authRateLimitBucket,
-  clearLoginPairRateLimit,
   consumeCsrfRateLimit,
   consumeLoginPairRateLimit,
   consumeLoginRateLimit,
@@ -247,15 +246,20 @@ describe('auth rate limit storage', () => {
       assert.equal(refresh.count, 1)
       assert.equal(refresh.purpose, 'refresh')
 
-      await clearLoginPairRateLimit(database, { key, ip, email })
-      const cleared = await consumeLoginPairRateLimit(database, {
+      const pairAgain = await consumeLoginPairRateLimit(database, {
         key,
         ip,
         email,
       })
       const loginAgain = await consumeLoginRateLimit(database, { key, ip })
+      const pairRows = await stored(
+        authRateLimitBucket(key, ['login_pair', ip, email.toLowerCase()]),
+        'login_pair',
+      )
 
-      assert.equal(cleared.count, 1)
+      assert.equal(pairAgain.allowed, true)
+      assert.equal(pairAgain.count, 2)
+      assert.equal(Number(pairRows[0].count), 2)
       assert.equal(loginAgain.count, 2)
     } finally {
       await release()

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { canonicalIpAddress } from './http/ip-address.js'
 
 const LOCAL_HOSTS = new Set([
   'localhost',
@@ -31,6 +32,8 @@ const envSchema = z
     SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
     SESSION_TOKEN_KEY: z.string().optional(),
     RATE_LIMIT_HMAC_KEY: z.string().optional(),
+    BFF_INTERNAL_SECRET: z.string().optional(),
+    BFF_TRUSTED_PEERS: z.string().optional(),
     P24_ENVIRONMENT: z.string().optional(),
     P24_MERCHANT_ID: z.string().optional(),
     P24_POS_ID: z.string().optional(),
@@ -67,6 +70,8 @@ function readEnv(env) {
     SUPABASE_SERVICE_ROLE_KEY: blankToUndefined(env?.SUPABASE_SERVICE_ROLE_KEY),
     SESSION_TOKEN_KEY: blankToUndefined(env?.SESSION_TOKEN_KEY),
     RATE_LIMIT_HMAC_KEY: blankToUndefined(env?.RATE_LIMIT_HMAC_KEY),
+    BFF_INTERNAL_SECRET: blankToUndefined(env?.BFF_INTERNAL_SECRET),
+    BFF_TRUSTED_PEERS: blankToUndefined(env?.BFF_TRUSTED_PEERS),
     P24_ENVIRONMENT: blankToUndefined(env?.P24_ENVIRONMENT),
     P24_MERCHANT_ID: blankToUndefined(env?.P24_MERCHANT_ID),
     P24_POS_ID: blankToUndefined(env?.P24_POS_ID),
@@ -267,6 +272,32 @@ function readSessionTokenKey(value, nodeEnv, ctx) {
 
 function readRateLimitHmacKey(value, nodeEnv, ctx) {
   return readEncodedKey(value, 'RATE_LIMIT_HMAC_KEY', nodeEnv, ctx)
+}
+
+function readBffInternalSecret(value, nodeEnv, ctx) {
+  return readEncodedKey(value, 'BFF_INTERNAL_SECRET', nodeEnv, ctx)
+}
+
+function readTrustedPeers(value, ctx) {
+  if (!value) {
+    return []
+  }
+
+  const peers = []
+
+  for (const part of value.split(',')) {
+    const trimmed = part.trim()
+    const canonical = canonicalIpAddress(trimmed)
+
+    if (!trimmed || canonical == null) {
+      addIssue(ctx, 'BFF_TRUSTED_PEERS')
+      return []
+    }
+
+    peers.push(canonical)
+  }
+
+  return [...new Set(peers)]
 }
 
 function readEncodedKey(value, field, nodeEnv, ctx) {
@@ -581,6 +612,12 @@ const configSchema = envSchema.transform((env, ctx) => {
     resolvedEnv,
     ctx,
   )
+  const bffInternalSecret = readBffInternalSecret(
+    env.BFF_INTERNAL_SECRET,
+    resolvedEnv,
+    ctx,
+  )
+  const bffTrustedPeers = readTrustedPeers(env.BFF_TRUSTED_PEERS, ctx)
   const p24 = readP24Config(env, resolvedEnv, ctx)
 
   return {
@@ -596,6 +633,8 @@ const configSchema = envSchema.transform((env, ctx) => {
     supabaseServiceRoleKey,
     sessionTokenKey,
     rateLimitHmacKey,
+    bffInternalSecret,
+    bffTrustedPeers,
     p24,
   }
 })

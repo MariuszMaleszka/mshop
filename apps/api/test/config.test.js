@@ -38,6 +38,8 @@ describe('loadConfig', () => {
       supabaseServiceRoleKey: null,
       sessionTokenKey: null,
       rateLimitHmacKey: null,
+      bffInternalSecret: null,
+      bffTrustedPeers: [],
       p24: null,
     })
   })
@@ -207,6 +209,50 @@ describe('loadConfig', () => {
     })
 
     assert.match(error.message, /SESSION_TOKEN_KEY/)
+  })
+
+  it('accepts canonical trusted peers and a 32-byte internal secret', () => {
+    const key = randomBytes(32)
+    const config = loadConfig({
+      NODE_ENV: 'test',
+      BFF_INTERNAL_SECRET: key.toString('base64'),
+      BFF_TRUSTED_PEERS: '127.0.0.1, ::ffff:10.0.0.1, ::1',
+    })
+
+    assert.equal(config.bffInternalSecret.equals(key), true)
+    assert.deepEqual(config.bffTrustedPeers, ['127.0.0.1', '10.0.0.1', '::1'])
+  })
+
+  it('rejects a short internal secret without revealing it', () => {
+    const error = configError({
+      NODE_ENV: 'test',
+      BFF_INTERNAL_SECRET: 'not-a-secret',
+    })
+
+    assert.match(error.message, /BFF_INTERNAL_SECRET/)
+    assert.equal(error.message.includes('not-a-secret'), false)
+  })
+
+  it('rejects an all-zero internal secret in production', () => {
+    const error = configError({
+      ...productionBase,
+      BFF_INTERNAL_SECRET: Buffer.alloc(32).toString('base64'),
+    })
+
+    assert.match(error.message, /BFF_INTERNAL_SECRET/)
+    assert.equal(error.message.includes('AAAA'), false)
+  })
+
+  it('rejects peer wildcards, networks, and host names without revealing them', () => {
+    for (const peers of ['*', '10.0.0.0/8', 'localhost', '127.0.0.1,']) {
+      const error = configError({
+        NODE_ENV: 'test',
+        BFF_TRUSTED_PEERS: peers,
+      })
+
+      assert.match(error.message, /BFF_TRUSTED_PEERS/)
+      assert.equal(error.message.includes(peers), false)
+    }
   })
 
   it('accepts an explicit production configuration', () => {

@@ -45,6 +45,8 @@ export default defineNuxtConfig({
     },
   },
   runtimeConfig: {
+    bffInternalSecret: '',
+    bffAllowedOrigin: '',
     public: {
       apiBase: 'http://localhost:3001/api/v1',
     },

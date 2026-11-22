@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 
 const SESSION_COLUMNS = `
   id_hash,
@@ -21,8 +21,29 @@ const SESSION_COLUMNS = `
   updated_at
 `
 
+const LOGIN_CHALLENGE_VALUE = /^[A-Za-z0-9_-]{43}$/
+
 export function sha256Hex(value) {
   return createHash('sha256').update(value, 'utf8').digest('hex')
+}
+
+export function createLoginChallengeValue(random = randomBytes) {
+  const bytes = random(32)
+
+  if (!Buffer.isBuffer(bytes) || bytes.length !== 32) {
+    throw new AccountSessionWriteError('rejected')
+  }
+
+  return bytes.toString('base64url')
+}
+
+export function isLoginChallengeValue(value) {
+  if (typeof value !== 'string' || !LOGIN_CHALLENGE_VALUE.test(value)) {
+    return false
+  }
+
+  const bytes = Buffer.from(value, 'base64url')
+  return bytes.length === 32 && bytes.toString('base64url') === value
 }
 
 export class AccountSessionWriteError extends Error {
@@ -133,6 +154,38 @@ export async function deleteAccountSession(database, idHash) {
   )
 
   return result.rowCount
+}
+
+export async function createLoginChallenge(
+  database,
+  { challengeId, csrfSecret },
+) {
+  if (
+    !isLoginChallengeValue(challengeId) ||
+    !isLoginChallengeValue(csrfSecret)
+  ) {
+    throw new AccountSessionWriteError('rejected')
+  }
+
+  try {
+    const result = await database.query(
+      `
+        insert into public.login_challenges (
+          id_hash,
+          csrf_token_hash,
+          expires_at
+        )
+        values ($1, $2, now() + interval '10 minutes')
+      `,
+      [sha256Hex(challengeId), sha256Hex(csrfSecret)],
+    )
+
+    if (result.rowCount !== 1) {
+      throw new AccountSessionWriteError('unavailable')
+    }
+  } catch (error) {
+    throw mapWriteError(error)
+  }
 }
 
 export async function insertLoginChallenge(database, challenge) {

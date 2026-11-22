@@ -194,6 +194,12 @@ Ciasteczko jest `HttpOnly`, `SameSite=Lax`, `Path=/`, bez `Domain`, z czasem ży
 
 Surowy identyfikator jest tylko w ciasteczku. SHA-256 tego identyfikatora, zapisany jako 64 znaki hex, jest jedyną postacią w koszyku gościa i w `carts.session_id`. Ten endpoint nie tworzy wiersza koszyka i nie zwraca identyfikatora ani skrótu.
 
+## Bootstrap CSRF
+`POST /api/v1/auth/csrf` jest trasą serwera Nuxt. Przeglądarka woła własny host, nie Express. Nuxt sprawdza `Origin`, a gdy go nie ma, origin z `Referer`, względem `WEB_ORIGIN` albo prywatnego `NUXT_BFF_ALLOWED_ORIGIN`. To nie jest publiczne `apiBase` i nie jest nagłówek `Host`. Złe źródło daje HTTP 403 i nie woła Expressa. Brak originu, brak sekretu BFF albo brak adresu gniazda daje HTTP 503. Po poprawnym źródle Nuxt wysyła serwerowe POST na `/api/v1/internal/login-challenges` z adresem wziętym z `socket.remoteAddress`. Odpowiedź przeglądarce zawiera wyłącznie `csrfSecret`. Identyfikator jest tylko w ciasteczku `mshop_login`, a w produkcji w `__Host-mshop_login`: `HttpOnly`, `SameSite=Lax`, `Path=/`, bez `Domain`, `Max-Age=600`. `Secure` jest wyłącznie w produkcji. Odmowa wewnętrzna, zła odpowiedź Expressa i błąd zapisu dają HTTP 503 bez sekretu. Limit CSRF daje HTTP 429 bez sekretu.
+
+## Wewnętrzne wydanie wyzwania
+`POST /api/v1/internal/login-challenges` jest wywołaniem Nuxt do Expressa, nie endpointem przeglądarki. Express przyjmuje je tylko od peera z `BFF_TRUSTED_PEERS`, z sekretem `X-Mshop-Internal-Secret` i kanonicznym adresem `X-Mshop-Client-Ip`. Odmowa daje HTTP 403 i `{ "code": "forbidden" }`. Po weryfikacji licznik CSRF zużywa jedną próbę, 60 na adres w oknie 15 minut. Przekroczenie daje HTTP 429. Brak klucza limitera, awaria bazy i błąd zapisu dają HTTP 503. Żaden z tych błędów nie zwraca identyfikatora ani sekretu CSRF. Udany zapis zwraca tylko te dwie wartości Base64URL. W bazie zostają ich skróty SHA-256. Termin ważności ustawia PostgreSQL na 10 minut. Zwykłe trasy API tego adresu nie czytają.
+
 Żądanie z Nuxt do API jest cross-origin. CORS przepuszcza wyłącznie dokładny `WEB_ORIGIN`, domyślnie `http://localhost:3000`. Dla tego originu odpowiedź ma `Access-Control-Allow-Credentials: true` oraz nagłówki `Content-Type`, `Authorization` i `Idempotency-Key`. Nie ma `Access-Control-Allow-Origin: *` i origin z żądania nie jest odbijany. Przeglądarka zapisze i odeśle ciasteczko, gdy klient wyśle `credentials: 'include'`. Żądanie bez `Origin` oraz żądanie z innego originu nie dostają nagłówków dostępu.
 
 ## 6. Koszyk

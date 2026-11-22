@@ -7,6 +7,7 @@ import { registerOrderRoutes } from './orders/routes.js'
 import { createP24Client } from './p24/client.js'
 import { registerP24WebhookRoutes } from './p24/webhook-routes.js'
 import { registerCatalogRoutes } from './catalog/routes.js'
+import { registerLoginChallengeRoutes } from './account-session/routes.js'
 import { registerGuestSessionRoutes } from './session/routes.js'
 import { createApp } from './app.js'
 import { loadConfig } from './config.js'
@@ -44,6 +45,12 @@ const app = createApp(config, {
   registerRoutes(router) {
     registerCatalogRoutes(router, { database })
     registerGuestSessionRoutes(router, { nodeEnv: config.nodeEnv })
+    registerLoginChallengeRoutes(router, {
+      database,
+      bffInternalSecret: config.bffInternalSecret,
+      bffTrustedPeers: config.bffTrustedPeers,
+      rateLimitHmacKey: config.rateLimitHmacKey,
+    })
     registerCartRoutes(router, { database })
     registerCheckoutRoutes(router, { database, p24: config.p24 })
     registerOrderRoutes(router, { database })
