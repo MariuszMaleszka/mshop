@@ -16,7 +16,10 @@ import {
   saveRefreshedSession,
   sha256Hex,
 } from '../src/account-session/repository.js'
-import { decryptToken, encryptToken } from '../src/account-session/token-cipher.js'
+import {
+  decryptToken,
+  encryptToken,
+} from '../src/account-session/token-cipher.js'
 import { createDatabase } from '../src/db/pool.js'
 import { createLogger } from '../src/http/logger.js'
 import { holdIntegrationDatabase } from './integration-lock.js'

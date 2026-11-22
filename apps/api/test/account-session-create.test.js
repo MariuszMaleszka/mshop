@@ -55,8 +55,8 @@ describe('createReadyAccountSession', () => {
       refreshToken,
       key,
     })
-    const insert = database.calls.find(
-      (call) => call?.text?.includes('insert into'),
+    const insert = database.calls.find((call) =>
+      call?.text?.includes('insert into'),
     )
     const stored = JSON.stringify(insert.params)
 
@@ -133,7 +133,8 @@ describe('createReadyAccountSession', () => {
         key,
         previousSessionHash: sha256Hex(randomUUID()).toUpperCase(),
       }),
-      (error) => error instanceof AccountSessionWriteError && error.code === 'rejected',
+      (error) =>
+        error instanceof AccountSessionWriteError && error.code === 'rejected',
     )
     assert.deepEqual(missingKey.calls, [])
     assert.deepEqual(badPrevious.calls, [])
