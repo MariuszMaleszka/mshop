@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { encryptToken, TokenCipherError } from './token-cipher.js'
 
 const SESSION_COLUMNS = `
   id_hash,
@@ -22,6 +23,9 @@ const SESSION_COLUMNS = `
 `
 
 const LOGIN_CHALLENGE_VALUE = /^[A-Za-z0-9_-]{43}$/
+const SESSION_HASH = /^[0-9a-f]{64}$/
+const USER_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export function sha256Hex(value) {
   return createHash('sha256').update(value, 'utf8').digest('hex')
@@ -51,6 +55,107 @@ export class AccountSessionWriteError extends Error {
     super('Account session write rejected')
     this.name = 'AccountSessionWriteError'
     this.code = code
+  }
+}
+
+export async function createReadyAccountSession(
+  database,
+  { userId, accessToken, refreshToken, key, previousSessionHash, random } = {},
+) {
+  if (typeof userId !== 'string' || !USER_ID.test(userId)) {
+    throw new AccountSessionWriteError('rejected')
+  }
+
+  if (
+    previousSessionHash != null &&
+    (typeof previousSessionHash !== 'string' ||
+      !SESSION_HASH.test(previousSessionHash))
+  ) {
+    throw new AccountSessionWriteError('rejected')
+  }
+
+  const access = sealToken(accessToken, key)
+  const refresh = sealToken(refreshToken, key)
+  const sessionId = createLoginChallengeValue(random)
+  let csrfSecret = createLoginChallengeValue(random)
+
+  if (csrfSecret === sessionId) {
+    csrfSecret = createLoginChallengeValue(random)
+  }
+
+  if (csrfSecret === sessionId) {
+    throw new AccountSessionWriteError('rejected')
+  }
+
+  try {
+    await database.withTransaction(async (tx) => {
+      if (previousSessionHash != null) {
+        await tx.query(
+          'delete from public.account_sessions where id_hash = $1',
+          [previousSessionHash],
+        )
+      }
+
+      const inserted = await tx.query(
+        `
+          insert into public.account_sessions (
+            id_hash,
+            user_id,
+            refresh_state,
+            key_version,
+            access_ciphertext,
+            access_nonce,
+            access_tag,
+            refresh_ciphertext,
+            refresh_nonce,
+            refresh_tag,
+            csrf_token_hash,
+            absolute_expires_at,
+            idle_expires_at
+          )
+          values (
+            $1, $2, 'ready', $3,
+            $4, $5, $6,
+            $7, $8, $9,
+            $10,
+            now() + interval '12 hours',
+            now() + interval '30 minutes'
+          )
+        `,
+        [
+          sha256Hex(sessionId),
+          userId,
+          access.version,
+          access.ciphertext,
+          access.nonce,
+          access.tag,
+          refresh.ciphertext,
+          refresh.nonce,
+          refresh.tag,
+          sha256Hex(csrfSecret),
+        ],
+      )
+
+      if (inserted.rowCount !== 1) {
+        throw new AccountSessionWriteError('unavailable')
+      }
+    })
+  } catch (error) {
+    throw mapWriteError(error)
+  }
+
+  return { sessionId, csrfSecret }
+}
+
+function sealToken(plaintext, key) {
+  try {
+    return encryptToken(plaintext, key)
+  } catch (error) {
+    if (error instanceof TokenCipherError) {
+      throw new AccountSessionWriteError('rejected')
+    }
+
+    throw new AccountSessionWriteError('unavailable')
   }
 }
 

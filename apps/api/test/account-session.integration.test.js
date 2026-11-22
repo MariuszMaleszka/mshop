@@ -5,6 +5,7 @@ import pg from 'pg'
 import {
   AccountSessionWriteError,
   consumeLoginChallenge,
+  createReadyAccountSession,
   deleteAccountSession,
   findAccountSession,
   incrementAuthAttempt,
@@ -15,7 +16,7 @@ import {
   saveRefreshedSession,
   sha256Hex,
 } from '../src/account-session/repository.js'
-import { encryptToken } from '../src/account-session/token-cipher.js'
+import { decryptToken, encryptToken } from '../src/account-session/token-cipher.js'
 import { createDatabase } from '../src/db/pool.js'
 import { createLogger } from '../src/http/logger.js'
 import { holdIntegrationDatabase } from './integration-lock.js'
@@ -269,6 +270,129 @@ describe('account session storage', () => {
           (error) => error?.code === '42501',
         )
       } finally {
+        await release()
+      }
+    },
+  )
+
+  it(
+    'stores a ready session with database deadlines and replaces the previous hash',
+    { skip },
+    async () => {
+      const release = await holdIntegrationDatabase(databaseUrl)
+      const userId = await insertUser()
+      const previous = sessionRow({ userId })
+      const accessToken = 'ready-access-token'
+      const refreshToken = 'ready-refresh-token'
+
+      try {
+        await insertAccountSession(database, previous)
+        const created = await createReadyAccountSession(database, {
+          userId,
+          accessToken,
+          refreshToken,
+          key,
+          previousSessionHash: previous.idHash,
+        })
+        const stored = await database.query(
+          `
+            select id_hash,
+                   csrf_token_hash,
+                   refresh_state,
+                   refresh_generation,
+                   refresh_started_at,
+                   refresh_token_hash,
+                   key_version,
+                   access_ciphertext,
+                   access_nonce,
+                   access_tag,
+                   refresh_ciphertext,
+                   refresh_nonce,
+                   refresh_tag,
+                   extract(epoch from (absolute_expires_at - created_at)) as absolute_seconds,
+                   extract(epoch from (idle_expires_at - created_at)) as idle_seconds,
+                   idle_expires_at <= absolute_expires_at as within_absolute
+            from public.account_sessions
+            where id_hash = $1
+          `,
+          [sha256Hex(created.sessionId)],
+        )
+        const row = stored.rows[0]
+        const visible = JSON.stringify(row)
+
+        assert.equal(await findAccountSession(database, previous.idHash), null)
+        assert.equal(row.id_hash, sha256Hex(created.sessionId))
+        assert.equal(row.csrf_token_hash, sha256Hex(created.csrfSecret))
+        assert.equal(row.refresh_state, 'ready')
+        assert.equal(row.refresh_generation, null)
+        assert.equal(row.refresh_started_at, null)
+        assert.equal(row.refresh_token_hash, null)
+        assert.equal(Number(row.absolute_seconds), 12 * 60 * 60)
+        assert.equal(Number(row.idle_seconds), 30 * 60)
+        assert.equal(row.within_absolute, true)
+        assert.equal(visible.includes(created.sessionId), false)
+        assert.equal(visible.includes(created.csrfSecret), false)
+        assert.equal(visible.includes(accessToken), false)
+        assert.equal(visible.includes(refreshToken), false)
+        assert.equal(
+          decryptToken(
+            {
+              ciphertext: row.access_ciphertext,
+              nonce: row.access_nonce,
+              tag: row.access_tag,
+              version: row.key_version,
+            },
+            key,
+          ),
+          accessToken,
+        )
+        assert.equal(
+          decryptToken(
+            {
+              ciphertext: row.refresh_ciphertext,
+              nonce: row.refresh_nonce,
+              tag: row.refresh_tag,
+              version: row.key_version,
+            },
+            key,
+          ),
+          refreshToken,
+        )
+
+        const missingUser = randomUUID()
+        const kept = await createReadyAccountSession(database, {
+          userId,
+          accessToken: 'second-access-token',
+          refreshToken: 'second-refresh-token',
+          key,
+          previousSessionHash: row.id_hash,
+        })
+
+        await assert.rejects(
+          createReadyAccountSession(database, {
+            userId: missingUser,
+            accessToken: 'failed-access-token',
+            refreshToken: 'failed-refresh-token',
+            key,
+            previousSessionHash: sha256Hex(kept.sessionId),
+          }),
+          (error) => {
+            assert.equal(error instanceof AccountSessionWriteError, true)
+            assert.equal(error.code, 'rejected')
+            assert.equal(String(error).includes('failed-access-token'), false)
+            assert.equal(String(error).includes('failed-refresh-token'), false)
+            return true
+          },
+        )
+        assert.notEqual(
+          await findAccountSession(database, sha256Hex(kept.sessionId)),
+          null,
+        )
+      } finally {
+        await database.query(
+          'delete from public.account_sessions where user_id = $1',
+          [userId],
+        )
         await release()
       }
     },
