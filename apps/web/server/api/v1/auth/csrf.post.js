@@ -5,6 +5,8 @@ import {
 import { serverInternalSecret } from '../../../utils/internal-call.js'
 
 export default defineEventHandler(async (event) => {
+  setResponseHeader(event, 'Cache-Control', 'no-store')
+
   const runtimeConfig = useRuntimeConfig()
   const result = await bootstrapCsrfChallenge({
     origin: getRequestHeader(event, 'origin'),
