@@ -48,6 +48,8 @@ export default [
         defineEventHandler: 'readonly',
         getRequestHeader: 'readonly',
         setCookie: 'readonly',
+        deleteCookie: 'readonly',
+        readBody: 'readonly',
         setResponseHeader: 'readonly',
         setResponseStatus: 'readonly',
       },

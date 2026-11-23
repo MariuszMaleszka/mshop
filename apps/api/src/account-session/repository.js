@@ -206,6 +206,34 @@ export async function findAccountSession(database, idHash) {
   return result.rows[0] ?? null
 }
 
+export async function findAccountSessionClock(database, idHash) {
+  const result = await database.query(
+    `
+      select
+        user_id,
+        refresh_state,
+        key_version,
+        access_ciphertext,
+        access_nonce,
+        access_tag,
+        refresh_ciphertext,
+        refresh_nonce,
+        refresh_tag,
+        absolute_expires_at > now() as absolute_valid,
+        idle_expires_at > now() as idle_valid,
+        case
+          when refresh_started_at > now() then null
+          else refresh_started_at > now() - interval '15 seconds'
+        end as pending_fresh
+      from public.account_sessions
+      where id_hash = $1
+    `,
+    [idHash],
+  )
+
+  return result.rows[0] ?? null
+}
+
 export async function saveRefreshedSession(
   database,
   { idHash, generation, session },

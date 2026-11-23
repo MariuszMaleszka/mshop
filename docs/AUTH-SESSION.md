@@ -1,12 +1,12 @@
 # Sesja konta, BFF i ochrona logowania
 
-Ten dokument jest jedyną szczegółową specyfikacją sesji. Tabele `account_sessions`, `login_challenges` i `auth_attempt_counters`, szyfrowanie AES-256-GCM oraz limiter PostgreSQL są w repozytorium. Limiter CSRF woła wyłącznie wewnętrzne wydanie wyzwania. `POST /api/v1/auth/csrf` na Nuxt i `POST /api/v1/internal/login-challenges` na Expressie wydają wyzwanie. Logowanie, odświeżenie, wylogowanie i zużycie wyzwania nadal nie są zaimplementowane. Nie zmienia obecnego kontraktu `requireAuth` ani `requireAdmin`. Checkout i Przelewy24 są poza zakresem.
+Ten dokument jest jedyną szczegółową specyfikacją sesji. Tabele `account_sessions`, `login_challenges` i `auth_attempt_counters`, szyfrowanie AES-256-GCM oraz limiter PostgreSQL są w repozytorium. Limiter CSRF woła wewnętrzne wydanie wyzwania. `POST /api/v1/auth/csrf` na Nuxt i `POST /api/v1/internal/login-challenges` na Expressie wydają wyzwanie. `POST /api/v1/internal/login` na Expressie zużywa wyzwanie i tworzy sesję dla zaufanego Nuxt. `POST /api/v1/auth/login` na Nuxt ustawia ciasteczko sesji. Odświeżenie, wylogowanie i ochrona stron nadal nie są zaimplementowane. Nie zmienia obecnego kontraktu `requireAuth` ani `requireAdmin`. Checkout i Przelewy24 są poza zakresem.
 
 Supabase Auth zostaje źródłem tożsamości. Administrator nie dostaje osobnego konta. Rola jest czytana z `public.user_roles` przy każdym żądaniu Expressa. Przeglądarka nie zapisuje tokenów w `localStorage` ani `sessionStorage`. Proces Nuxt i proces Express nie trzymają sesji użytkowników w zmiennych globalnych.
 
 ## 1. Co jest dziś
 
-Express weryfikuje access token z nagłówka `Authorization: Bearer` przez JWKS. Nie ma trasy logowania, odświeżenia ani wylogowania. `useApi()` sam nie dokłada Bearer. Panel `/admin/orders` woła API bez tego nagłówka.
+Express weryfikuje access token z nagłówka `Authorization: Bearer` przez JWKS. Przeglądarka loguje się przez `POST /api/v1/auth/login` na Nuxt. Express przyjmuje logowanie tylko z zaufanego Nuxt. Nie ma odświeżenia ani wylogowania. `useApi()` sam nie dokłada Bearer. Panel `/admin/orders` woła API bez tego nagłówka.
 
 Jedyna sesja aplikacji to gość: ciasteczko `shop_guest_session`. Nie jest sesją konta i nie staje się nią po tym projekcie.
 
@@ -56,7 +56,7 @@ To nie daje atomowości z Supabase. Zużycie wyzwania przed odpowiedzią Auth oz
 
 ## 5. Adres IP i limiter
 
-Dziś `apps/api` nie wywołuje `trust proxy`. Express bierze adres z połączenia TCP. Nagłówek `X-Forwarded-For` nie wybiera adresu, bo aplikacja go nie czyta. Limiter nie czyta gniazda ani nagłówków. Dostaje adres od przyszłego wywołującego. Sekret `BFF_INTERNAL_SECRET` i lista `BFF_TRUSTED_PEERS` są w konfiguracji. Woła je tylko `POST /api/v1/internal/login-challenges`. Pusta lista i brak sekretu nie zatrzymują startu API. `trust proxy` pozostaje wyłączone.
+Dziś `apps/api` nie wywołuje `trust proxy`. Express bierze adres z połączenia TCP. Nagłówek `X-Forwarded-For` nie wybiera adresu, bo aplikacja go nie czyta. Limiter nie czyta gniazda ani nagłówków. Dostaje adres od przyszłego wywołującego. Sekret `BFF_INTERNAL_SECRET` i lista `BFF_TRUSTED_PEERS` są w konfiguracji. Wołają je `POST /api/v1/internal/login-challenges` i `POST /api/v1/internal/login`. Pusta lista i brak sekretu nie zatrzymują startu API. `trust proxy` pozostaje wyłączone.
 
 Logowanie i bootstrap idą z przeglądarki do Nuxt, a dopiero Nuxt woła Express. Express widzi więc adres procesu Nuxt, nie adres przeglądarki. Adres do licznika ustala Nuxt i przekazuje go w nagłówku `X-Mshop-Client-Ip`.
 

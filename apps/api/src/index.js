@@ -50,6 +50,9 @@ const app = createApp(config, {
       bffInternalSecret: config.bffInternalSecret,
       bffTrustedPeers: config.bffTrustedPeers,
       rateLimitHmacKey: config.rateLimitHmacKey,
+      sessionTokenKey: config.sessionTokenKey,
+      supabaseUrl: config.supabaseUrl,
+      supabaseAnonKey: config.supabaseAnonKey,
     })
     registerCartRoutes(router, { database })
     registerCheckoutRoutes(router, { database, p24: config.p24 })
