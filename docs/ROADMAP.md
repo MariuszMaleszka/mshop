@@ -3,6 +3,34 @@
 Statusy: `TODO`, `IN_PROGRESS`, `BLOCKED`, `DONE`.
 Nie oznaczaj zadania jako DONE bez spełnienia kryteriów akceptacji.
 
+**Stan na:** 24 listopada 2026. Nie ma tu procentu ukończenia. Bieżący punkt wznowienia jest w `docs/PROJECT_HANDOFF.md`. Testy są w `docs/TESTING.md`.
+
+## Gdzie jest MVP
+
+Status oznacza najwyższy poziom potwierdzony kodem i testami. „Przetestowane” nie znaczy „gotowe produkcyjnie”.
+
+| Obszar | Status | Czego brakuje do zamknięcia etapu |
+| --- | --- | --- |
+| Monorepo, health, CI lint/test/build | zaimplementowane i w CI | wdrożenie produkcyjne |
+| Schemat sprzedaży i sesji | zaimplementowany migracjami | `customer_addresses`, `product_images`, `store_settings`, seed demonstracyjny |
+| Katalog publiczny | zaimplementowany i testowany | zapis admina, slug, zdjęcia |
+| Koszyk gościa, konta i scalanie API | zaimplementowane i testowane | wywołanie `POST /api/v1/cart/merge` z Nuxt |
+| Checkout gotówkowy i sandbox P24 | zaimplementowane i testowane | produkcyjny checkout online zostaje wyłączony; zwrot i definitywna odmowa P24 nie istnieją |
+| Magazyn i rezerwacje | zaimplementowane częściowo | `NULL` blokuje zakup; online wygasa bez zużycia stanu; gotówkę zużywa tylko `mark-paid` |
+| Sesja konta | zaimplementowana częściowo | brak odświeżenia, wylogowania, strony logowania i middleware |
+| Panel zamówień | zaimplementowany częściowo | odczyt przez BFF jest; brak ochrony stron, CRUD i operacji gotówki z UI |
+| Podatek i dokumenty sprzedaży | decyzja wymagana | `unknown` i `VAT_POLICY_NOT_CONFIRMED` blokują checkout |
+| Powiadomienia, dostawa, faktury, fiskalizacja | poza pierwszą wersją albo decyzja | patrz `docs/INTEGRATIONS.md` i sekcja 9 `docs/PROJECT_HANDOFF.md` |
+
+Najbliższe małe etapy, każdy osobno i po zgodzie:
+
+1. Testy zachowania stron zamówień w Vitest: SSR bez danych, jedno żądanie po montowaniu, zły UUID, komunikaty 401, 403, 404 i 503.
+2. Strona logowania wołająca istniejące `POST /api/v1/auth/login` i `POST /api/v1/auth/csrf`. Bez odświeżenia.
+3. Odświeżenie i wylogowanie według `docs/AUTH-SESSION.md`, razem z testem wyścigu.
+4. Middleware stron dopiero wtedy, gdy nie traktuje każdej gotowej sesji jako administratora. Rola zostaje w Expressie.
+
+Kryterium zamknięcia etapu: kryteria z właściwej fazy poniżej oraz testy z `docs/TESTING.md` dla zmienionego zachowania. Samo istnienie pliku albo trasy nie zamyka etapu.
+
 ## Phase 0 — Decyzje i przygotowanie
 - [x] Zakup gościnny jest dozwolony. Historia konta obejmuje zamówienia złożone po zalogowaniu.
 - [x] Wybrać operatora płatności online MVP: Przelewy24. Stripe nie wchodzi do tej wersji. Sandboxowy checkout woła rejestrację po commicie. Produkcyjny checkout online pozostaje wyłączony.
@@ -57,13 +85,14 @@ Acceptance spełnione dla zastosowanych migracji:
 Jeszcze otwarte: seed demonstracyjny całego sklepu nie istnieje. Lokalny skrypt katalogu nie nadaje roli `admin`, nie zawiera sekretów i nie zastępuje tego seeda.
 
 ## Phase 3 — Authentication & authorization
-Konfiguracja środowiska API, obsługa błędów HTTP, pula PostgreSQL, weryfikacja JWT, rola `admin` oraz walidacja żądań Zod są ukończone. W repozytorium są tabele sesji, szyfr tokenów i limiter PostgreSQL. Logowanie, ciasteczka i sesja Nuxt nie są rozpoczęte. Szczegóły sesji, czasy i test wyścigu są tylko w `docs/AUTH-SESSION.md`. Ten dokument nie jest zgodą na dalszą implementację.
+Konfiguracja środowiska API, obsługa błędów HTTP, pula PostgreSQL, weryfikacja JWT, rola `admin` oraz walidacja żądań Zod są ukończone. Sesja konta jest rozpoczęta. Szczegóły i to, czego jeszcze nie ma, są w `docs/AUTH-SESSION.md`. Dalsze odświeżenie i wylogowanie wymagają osobnej zgody.
 
 - [x] Scentralizować konfigurację API i walidować zmienne środowiskowe przez Zod.
 - [x] Ujednolicić błędy HTTP, identyfikator żądania i logowanie bez sekretów.
 - [x] Dodać pulę `pg`, zamknięcie procesu i `GET /api/v1/health/ready`.
-- [ ] Skonfigurować Supabase Auth.
-- [ ] Sesja konta według `docs/AUTH-SESSION.md`, po osobnej zgodzie. Tabele, szyfr i limiter już są. Brakuje logowania, odświeżenia, wylogowania i BFF. Do tego czasu zostaje obecny Bearer oraz `requireAuth` i `requireAdmin`.
+- [ ] Skonfigurować produkcyjny projekt Supabase Auth. Lokalny plik `supabase/config.toml` nie jest tą polityką. `enable_signup` lokalnie nie rozstrzyga rejestracji produkcyjnej.
+- [x] Logowanie hasłem przez Nuxt BFF i wewnętrzny Express, ciasteczko sesji, CSRF przed logowaniem oraz odczyt sesji z przedłużeniem bezczynności. Bearer, `requireAuth` i `requireAdmin` zostają.
+- [ ] Odświeżenie tokenu i wylogowanie według `docs/AUTH-SESSION.md`. Specyfikacja jest zaakceptowana. Kodu rotacji i trasy wylogowania nie ma.
 - [ ] Google OAuth.
 - [ ] Apple OAuth.
 - [ ] Odzyskiwanie hasła.
@@ -149,7 +178,7 @@ Acceptance:
 - [x] Szczegóły jednego zamówienia: `GET /api/v1/orders/:id` i strona `/orders/{id}`. Odczyt nie oznacza zamówienia jako opłaconego.
 - [x] Administracyjna lista zamówień: `GET /api/v1/admin/orders`. Odczyt z paginacją, filtrami i sortowaniem. Bez zmian danych.
 - [x] Szczegóły zamówienia w API: `GET /api/v1/admin/orders/:id`. Odczyt snapshotu, płatności, rezerwacji, historii i zdarzeń. Bez rozstrzygania płatności.
-- [x] Layout panelu i lista `/admin/orders` czytają API. Szczegóły w panelu pokazują skrót zamówienia. Logowanie administratora nie jest podłączone.
+- [x] Layout panelu oraz `/admin/orders` i `/admin/orders/:id` czytają przez Nuxt BFF. Express sprawdza Bearer i rolę. Nie ma strony logowania ani middleware stron. Panel nie woła `mark-paid` ani `cancel`. Szczegóły pokazują skrót zamówienia, nie pełny dokument sprzedaży.
 - [ ] Zmiana statusu realizacji.
 - [ ] Historia statusów.
 - [ ] Lista klientów.
@@ -172,7 +201,7 @@ Acceptance:
 - e-mail nie jest wysyłany wielokrotnie przez retry tego samego zdarzenia.
 
 ## Phase 10 — Hardening & deployment
-- [ ] Testy E2E kluczowych ścieżek.
+- [ ] Testy E2E kluczowych ścieżek. Vitest ma jeden test dymny strony listy. Nie jest w CI i nie zastępuje E2E. Patrz `docs/TESTING.md`.
 - [ ] Rate limiting pozostałych tras. Limiter logowania należy do fazy 3 i nie czeka na ten punkt.
 - [ ] CORS i security headers. Pomiar CSP jest opisany w `docs/AUTH-SESSION.md`. Egzekwowanie czeka na przegląd naruszeń.
 - [ ] Monitoring i logi.

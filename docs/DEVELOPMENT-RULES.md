@@ -42,9 +42,12 @@
 - Webhooki weryfikuj i obsługuj idempotentnie.
 
 ## Testy
-- Unit: logika service i walidacje.
-- Integration: endpointy i dostęp do bazy testowej.
-- E2E: kluczowe ścieżki klienta i admina.
+Aktualne polecenia i luki są w `docs/TESTING.md`.
+
+- Unit: logika service i walidacje, runner `node:test`.
+- Integration: endpointy i PostgreSQL na `127.0.0.1:54322`, ten sam runner. Brak bazy pomija albo przerywa te pliki zgodnie z ich własnym warunkiem. Nie resetuj bazy, żeby je uruchomić.
+- Komponenty Nuxt: Vitest, skrypt `test:nuxt` w `apps/web`. Dziś jest jeden test dymny. Nie wchodzi do `pnpm test` ani do CI.
+- E2E: nie ma runnera ani testów. Playwright nie jest zależnością.
 - Testuj scenariusze negatywne, nie tylko happy path.
 
 ## Git

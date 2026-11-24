@@ -6,7 +6,8 @@
     "dev": "nuxt dev --port 3000",
     "build": "nuxt build",
     "preview": "nuxt preview --port 3000",
-    "test": "node --test"
+    "test": "node --test test/*.test.js",
+    "test:nuxt": "vitest run"
   },
   "dependencies": {
     "@fontsource/poppins": "^5.3.0",
@@ -16,6 +17,10 @@
     "primevue": "4.5.5"
   },
   "devDependencies": {
-    "@primevue/nuxt-module": "4.5.5"
+    "@nuxt/test-utils": "4.4.0",
+    "@primevue/nuxt-module": "4.5.5",
+    "@vue/test-utils": "2.6.0",
+    "happy-dom": "21.0.4",
+    "vitest": "5.1.1"
   }
 }

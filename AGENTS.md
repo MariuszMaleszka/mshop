@@ -10,6 +10,7 @@ Budujemy modułowy, pojedynczy sklep internetowy. Szczegóły i ograniczenia są
 - pnpm workspaces
 - Zod do walidacji danych
 - REST API
+- Testy: `node:test` przez `pnpm test`. Vitest w `apps/web` jest osobnym skryptem `test:nuxt` i nie wchodzi do CI. Szczegóły są w `docs/TESTING.md`.
 
 ## Zasady pracy
 1. Zanim zaczniesz, przeczytaj dokumentację związaną z zadaniem.

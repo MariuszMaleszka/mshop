@@ -70,9 +70,9 @@ Dostępna baza:
 Niedostępna baza: HTTP 503 i kod `SERVICE_UNAVAILABLE`.
 
 ## Uwierzytelnianie
-Logowanie, rejestracja i odświeżanie sesji należą dziś do Supabase Auth. Express sprawdza access token tylko na trasach, które dostaną middleware `requireAuth`. To middleware nie jest globalne. Express nie ma trasy hasła, odświeżenia ani wylogowania.
+Express sprawdza access token tylko na trasach z middleware `requireAuth`. To middleware nie jest globalne. Hasło przyjmuje wyłącznie `POST /api/v1/internal/login`, wołane przez Nuxt. Express nie ma publicznej trasy hasła, odświeżenia ani wylogowania. Rejestracja, OAuth i reset hasła nie są zaimplementowane.
 
-Docelowa sesja jest opisana wyłącznie w `docs/AUTH-SESSION.md`. W repozytorium są tabele, szyfr tokenów i limiter. Tras logowania, odświeżenia i wylogowania nie ma. Dalsze prace wymagają osobnej zgody i nie zmieniają poniższego kontraktu Bearer.
+Szczegóły sesji są w `docs/AUTH-SESSION.md`. Poniższy kontrakt Bearer zostaje dla wywołań, które niosą nagłówek.
 
 Poprawny token udostępnia `req.auth.userId` równe claimowi `sub`. Sprawdzane są podpis, algorytm `ES256` albo `RS256`, issuer `{SUPABASE_URL}/auth/v1`, audience `authenticated`, `exp` i UUID w `sub`.
 
@@ -207,6 +207,15 @@ Surowy identyfikator jest tylko w ciasteczku. SHA-256 tego identyfikatora, zapis
 
 `POST /api/v1/internal/login` jest wywołaniem Nuxt do Expressa, nie endpointem przeglądarki. Express przyjmuje je tym samym sprawdzeniem peera, sekretu `X-Mshop-Internal-Secret` i kanonicznego `X-Mshop-Client-Ip`. Odmowa daje HTTP 403 i `{ "code": "forbidden" }` przed walidacją body. Body niesie `challengeId`, `csrfSecret`, `email`, `password` i opcjonalny `previousSessionHash` jako 64 małe znaki hex. Nie niesie adresu IP. Złe body daje HTTP 400 i `{ "code": "invalid_request" }`. Po walidacji Express woła istniejącą operację logowania raz, z adresem z wyniku wewnętrznego wywołania. Sukces daje HTTP 200 i wyłącznie `sessionId` oraz `csrfSecret`. Złe albo zużyte wyzwanie daje HTTP 403 `{ "code": "invalid_challenge" }`. Limit daje HTTP 429 `{ "code": "rate_limited" }`. Złe dane logowania dają HTTP 401 `{ "code": "invalid_credentials" }`. Niedostępność Auth, bazy albo konfiguracji oraz zła odpowiedź Supabase dają HTTP 503 `{ "code": "unavailable" }`. Inny błąd daje HTTP 500 `{ "code": "internal_error" }`. Żadna odpowiedź nie zawiera tokenów, e-maila, hasła, adresu ani skrótów.
 
+## Wewnętrzny odczyt sesji
+`POST /api/v1/internal/account-sessions/inspect` jest wywołaniem Nuxt do Expressa, nie endpointem przeglądarki. Ta sama ochrona peera i sekretu co przy logowaniu działa przed odczytem body. Odmowa daje HTTP 403 `{ "code": "forbidden" }` i nie zdradza powodu. Adres bierze się z gniazda, nie z `X-Forwarded-For` i nie z body.
+
+Body to wyłącznie `{ "sessionHash" }` jako 64 małe znaki hex. Brak pola, zły typ i dodatkowe pola dają HTTP 400 `{ "code": "invalid_request" }`. Odpowiedź nie powtarza wejścia.
+
+Po walidacji Express woła raz `inspectAndExtendAccountSession`. Gotowa sesja daje HTTP 200 i wyłącznie `status`, `userId`, `accessToken`, `refreshToken` oraz `keyVersion`. Te tokeny zostają na granicy Nuxt–Express. `not_found`, `expired`, `stale_pending`, `unknown`, `invalid` oraz wynikowy status `unavailable` dają HTTP 401 `{ "code": "invalid_session" }`. Młody `pending` daje HTTP 503 `{ "code": "session_pending" }` i nie przedłuża bezczynności. Rzucony błąd techniczny `unavailable` daje HTTP 503 `{ "code": "service_unavailable" }`. Rzucony `rejected`, w tym brak albo zły `SESSION_TOKEN_KEY` po poprawnym skrócie, oraz inny nieoczekiwany błąd dają HTTP 500 `{ "code": "internal_error" }`. Trasa ustawia `Cache-Control: no-store` przed obsługą. Niepoprawny JSON łapie globalny parser i ta trasa nie dokłada wtedy własnego `no-store`.
+
+Nuxt czyta sesję funkcją `readAccountSession` i nie wystawia jej jako osobnej trasy przeglądarki. Brak albo odrzucone ciasteczko daje `invalid_session` bez wywołania Expressa.
+
 Żądanie z Nuxt do API jest cross-origin. CORS przepuszcza wyłącznie dokładny `WEB_ORIGIN`, domyślnie `http://localhost:3000`. Dla tego originu odpowiedź ma `Access-Control-Allow-Credentials: true` oraz nagłówki `Content-Type`, `Authorization` i `Idempotency-Key`. Nie ma `Access-Control-Allow-Origin: *` i origin z żądania nie jest odbijany. Przeglądarka zapisze i odeśle ciasteczko, gdy klient wyśle `credentials: 'include'`. Żądanie bez `Origin` oraz żądanie z innego originu nie dostają nagłówków dostępu.
 
 ## 6. Koszyk
@@ -315,6 +324,14 @@ Odpowiedź ma `data` oraz `meta.page`, `meta.limit`, `meta.total` i `meta.totalP
 `GET /api/v1/admin/orders/:id` jest odczytem jednego zamówienia. Nie zmienia statusów, rezerwacji, magazynu ani płatności i nie woła Przelewy24. Identyfikator musi być UUID. Zły format daje HTTP 400 `VALIDATION_ERROR` zanim sprawdzi token. Brak tokenu daje HTTP 401, konto bez roli `admin` daje HTTP 403, a brak zamówienia daje HTTP 404 `NOT_FOUND`.
 
 Odpowiedź ma `data` i puste `meta`. `data.order` pochodzi z `orders`: numer, daty, metoda, status płatności, status realizacji, kwoty tekstowe w groszach, waluta i snapshot sprzedawcy. `data.customer` bierze e-mail, typ i `customer_id` z zamówienia oraz znane pola `billing_snapshot`. Nie czyta tabeli `customers` ani `auth.users`. `data.items` pochodzi z `order_items`, łącznie z identyfikatorem produktu zapisanym na pozycji. Cena i nazwa są snapshotem, nie aktualnym katalogiem. `data.payments` to wiersze `payments` tego zamówienia: status płatności, kwota, zwrot, daty, `provider`, `provider_transaction_id` i `initialization_status` bez zmiany wartości. `unknown` i `verification_requested` nie są mapowane na inny status. `redirect_token` nie jest zwracany. `data.reservations` to `inventory_reservations` tego zamówienia. `data.history` to `order_status_history` z `changed_by` i notatką. `data.paymentEvents` to typ, dostawca, `provider_event_id`, daty utworzenia i `processed_at`. Payload zdarzenia nie jest zwracany. Jedno zamówienie jest jednym `SELECT` z podzapytaniami `json_agg`, ograniczonymi do jego identyfikatora.
+
+Te same dwa odczyty mają trasy Nuxt o identycznych ścieżkach. Przeglądarka woła własny host z ciasteczkiem sesji i bez `Authorization`. Nuxt ustawia `Cache-Control: no-store`, czyta sesję i przy gotowej sesji wykonuje jedno `GET` do Expressa z `Authorization: Bearer` z tej sesji. Nie wysyła `X-Mshop-Internal-Secret` ani `X-Mshop-Client-Ip`. Nie sprawdza roli. Express nadal robi `requireAuth` i `requireAdmin`.
+
+Brak sesji daje HTTP 401 `{ "error": { "code": "UNAUTHORIZED", "message": "Authentication required", "details": [] } }`. `session_pending` i `service_unavailable` dają HTTP 503 `SERVICE_UNAVAILABLE`. Lista przekazuje do Expressa tylko tekstowe `page`, `limit`, `search`, `paymentStatus`, `fulfillmentStatus`, `paymentMethod`, `sortBy` i `sortOrder`. Inne klucze są odrzucane. Wartość z listy, która nie jest tekstem, daje lokalne HTTP 400 i nie woła Expressa. Szczegóły sprawdzają UUID przed odczytem sesji. Zły identyfikator daje HTTP 400 `VALIDATION_ERROR` bez wywołania Expressa. Poprawny identyfikator bez sesji daje 401.
+
+Sukces wymaga dokładnie `{ "data", "meta" }`. Błędy 400, 401, 403, 404 i 503 są przyjmowane tylko przy oczekiwanym kodzie i bezpiecznej kopercie. Przeglądarka dostaje stały komunikat i puste `details`, nie tekst z Expressa. Body zawierające token, ciasteczko albo sekret wewnętrzny oraz nieznany status dają HTTP 503. Limit czasu jednego odczytu to 8 sekund, bez ponowienia.
+
+Panel nie woła `mark-paid` ani `cancel`. Te zapisy zostają bezpośrednimi trasami Expressa.
 
 Pozostałe endpointy są planowane:
 - `GET /admin/dashboard`

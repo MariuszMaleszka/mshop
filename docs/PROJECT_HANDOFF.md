@@ -1,7 +1,7 @@
 # Punkt kontrolny projektu – sklep internetowy
 
-**Stan na:** 20 listopada 2026, po Step 12E.22  
-**Status bieżący:** Checkout gotówkowy i sandboxowy checkout online są na `main`. Rejestracja Przelewy24 następuje po commicie zamówienia. Webhook jest podłączony i potwierdza płatność przez `transaction/verify`. Produkcyjny checkout online pozostaje wyłączony. Rezerwacje online wygasają po 15 minutach od utworzenia zamówienia i spóźniona płatność ich nie przywraca ani nie rozwiązuje realizacji. Stany `unknown` oraz `verification_requested` bez `verification_accepted` wymagają ręcznego uzgodnienia z `docs/P24_RECONCILIATION.md`. Storefront ma katalog, koszyk gościa, formularz checkoutu gotówkowego i odczyt zamówienia. Checkout nadal blokują `SELLER_TAX_STATUS_UNKNOWN` i `VAT_POLICY_NOT_CONFIRMED`. Odbiór gotówki potwierdza wyłącznie administrator przez `POST /api/v1/admin/orders/:id/mark-paid`. Operacja zmniejsza stan i ustawia rezerwację na `consumed`. Realizacja zostaje `new`. Anulowanie nieopłaconej gotówki robi administrator przez `POST /api/v1/admin/orders/:id/cancel`. Listę zamówień czyta `GET /api/v1/admin/orders`, a szczegóły `GET /api/v1/admin/orders/:id`. Panel Nuxt ma `/admin/orders` i skrót szczegółów. Nie ma logowania administratora. Szczegóły nie wołają operatora i nie zwracają payloadu zdarzenia ani tokenu przekierowania. Zwrot nadal nie jest zaimplementowany. Strategia VAT dla stawek standardowych pozostaje nierozstrzygnięta.
+**Stan na:** 24 listopada 2026  
+**Status bieżący:** Checkout gotówkowy i sandboxowy checkout online są na `main`. Rejestracja Przelewy24 następuje po commicie zamówienia. Webhook jest podłączony i potwierdza płatność przez `transaction/verify`. Produkcyjny checkout online pozostaje wyłączony. Rezerwacje online wygasają po 15 minutach od utworzenia zamówienia i spóźniona płatność ich nie przywraca ani nie rozwiązuje realizacji. Stany `unknown` oraz `verification_requested` bez `verification_accepted` wymagają ręcznego uzgodnienia z `docs/P24_RECONCILIATION.md`. Storefront ma katalog, koszyk gościa, formularz checkoutu gotówkowego i odczyt zamówienia. Checkout nadal blokują `SELLER_TAX_STATUS_UNKNOWN` i `VAT_POLICY_NOT_CONFIRMED`. `stock_quantity = NULL` blokuje zakup kodem `STOCK_UNKNOWN`. Odbiór gotówki potwierdza wyłącznie administrator przez `POST /api/v1/admin/orders/:id/mark-paid`. Operacja zmniejsza stan i ustawia rezerwację na `consumed`. Realizacja zostaje `new`. Anulowanie nieopłaconej gotówki robi administrator przez `POST /api/v1/admin/orders/:id/cancel`. Express czyta listę `GET /api/v1/admin/orders` i szczegóły `GET /api/v1/admin/orders/:id`. Panel woła te same ścieżki na hoście Nuxt. BFF czyta ciasteczko sesji i dokłada Bearer. Nie ma strony logowania, odświeżenia, wylogowania ani middleware stron. Szczegóły nie wołają operatora i nie zwracają payloadu zdarzenia ani tokenu przekierowania. Zwrot nadal nie jest zaimplementowany. Strategia VAT dla stawek standardowych pozostaje nierozstrzygnięta.
 
 > Ten plik jest krótkim punktem wznowienia pracy dla Cursor i ChatGPT. Nie zastępuje dokumentacji technicznej projektu (`ARCHITECTURE.md`, `API.md`, `ROADMAP.md`) ani raportów z wykonania. W razie rozbieżności najpierw sprawdź aktualny kod i właściwą dokumentację projektu. Nie zakładaj, że opis w tym pliku jest nowszy niż repozytorium.
 
@@ -38,8 +38,8 @@ Przed rozpoczęciem kolejnego zadania:
 - Uwierzytelnianie: Supabase Auth.
 - Walidacja: Zod.
 - Dostęp do PostgreSQL: `pg` po stronie backendu Express.
-- Testy: `node:test`.
-- CI: GitHub Actions.
+- Testy: `node:test` w `pnpm test`. Osobno Vitest tylko dla `apps/web`, skrypt `test:nuxt`, poza CI. Opis jest w `docs/TESTING.md`.
+- CI: GitHub Actions, `pnpm lint`, `pnpm format:check`, `pnpm test`, `pnpm build`.
 
 ### Zasady architektoniczne
 
@@ -54,7 +54,7 @@ Przed rozpoczęciem kolejnego zadania:
 - Nie zwracać `SELECT *` z publicznych endpointów.
 - Błędy API mają bezpieczny, wspólny format. Nie ujawniać stack trace, SQL, connection stringów, tokenów, haseł ani danych żądania.
 - Nie logować tokenów, cookie, sekretów, request body ani danych osobowych.
-- Tabele sesji, szyfr AES-256-GCM i limiter PostgreSQL są w repozytorium. Opis jest w `docs/AUTH-SESSION.md`. Logowania, odświeżenia, wylogowania, CSRF, ciasteczek i BFF nie ma. Bez osobnej zgody nie wolno wystawiać tych tras. Gość zostaje przy `shop_guest_session`. Administrator nie dostaje osobnej tożsamości.
+- Tabele sesji, szyfr AES-256-GCM, limiter, CSRF, logowanie hasłem, odczyt sesji i BFF odczytu zamówień administratora są w repozytorium. Opis jest w `docs/AUTH-SESSION.md`. Odświeżenia, wylogowania i ochrony stron nie ma. Bez osobnej zgody nie wolno ich dodawać ani zmieniać `requireAuth` i `requireAdmin`. Gość zostaje przy `shop_guest_session`. Administrator nie dostaje osobnej tożsamości.
 
 ## 4. Założenia biznesowe MVP
 
@@ -91,8 +91,11 @@ Phase 2 ma migracje w repozytorium, łącznie z inicjalizacją płatności Przel
 9. `20261118100200_standard_vat_rates.sql`
 10. `20261118100300_inventory_reservations.sql`
 11. `20261119120000_payment_initialization.sql`
+12. `20261120120000_order_guest_session.sql`
+13. `20261120140000_account_sessions.sql`
+14. `20261120160000_revoke_session_table_api_grants.sql`
 
-Istotne tabele: `profiles`, `user_roles`, `customers`, `shop_profile`, `categories`, `products`, `carts`, `cart_items`, `orders`, `order_items`, `order_status_history`, `payments`, `payment_events`, `idempotency_keys`, `inventory_reservations`.
+Kolejność i skutek każdej migracji są w `docs/DATABASE.md`. Istotne tabele: `profiles`, `user_roles`, `customers`, `shop_profile`, `categories`, `products`, `carts`, `cart_items`, `orders`, `order_items`, `order_status_history`, `payments`, `payment_events`, `idempotency_keys`, `inventory_reservations`, `account_sessions`, `login_challenges`, `auth_attempt_counters`.
 
 Nie dodawaj migracji ani nie zmieniaj RLS bez jawnego zakresu i akceptacji użytkownika.
 
@@ -179,9 +182,9 @@ Wybór właściciela:
 - Oba koszyki istnieją: ilości wspólnych produktów są sumowane, pozostałe pozycje gościa są dopisywane, a koszyk gościa dostaje `abandoned` z tym samym `session_id` i pustym `user_id`.
 - Produkty nieaktywne też przechodzą. Waluta inna niż `PLN` oraz przekroczenie ilości albo bezpiecznej kwoty wycofuje całe scalanie.
 
-Ostatnia weryfikacja po migracji rezerwacji: `pnpm test` — 183 testy, 0 niepowodzeń, 0 pominiętych; `pnpm lint` i `pnpm format:check` czyste. Testy integracyjne koszyka w `apps/api/test/cart.integration.test.js` obejmują wyścigi oparte o `pg_locks`.
+Zapisany tu kiedyś wynik `pnpm test` z 183 testami jest historyczny i nie opisuje bieżącego zestawu. Aktualne polecenia są w `docs/TESTING.md`. Testy integracyjne koszyka w `apps/api/test/cart.integration.test.js` obejmują wyścigi oparte o `pg_locks`.
 
-**Następna czynność:** czekać na decyzję użytkownika. Checkout, worker, webhook P24, odczyt jednego zamówienia i gotówkowy formularz są już na `main`. Nie implementować ich od nowa. Nie włączać produkcyjnego checkoutu online. Nie podłączać scalania we frontendzie bez osobnej zgody. Nie powtarzać migracji. Nie obchodzić blokad sprzedawcy i VAT.
+**Następna czynność:** czekać na decyzję użytkownika. Checkout, worker, webhook P24, odczyt jednego zamówienia, gotówkowy formularz, logowanie hasłem i odczyt zamówień administratora przez BFF są już na `main`. Nie implementować ich od nowa. Nie włączać produkcyjnego checkoutu online. Nie podłączać scalania we frontendzie bez osobnej zgody. Nie dodawać odświeżenia, wylogowania ani middleware stron bez osobnej zgody. Nie powtarzać migracji. Nie obchodzić blokad sprzedawcy i VAT.
 
 Świadomie odłożone: prefiks `__Host-`, `SameSite=Lax` przy osobnych domenach, redakcja gołego skrótu bez nazwy ciasteczka. Credentialed CORS działa dla dokładnego `WEB_ORIGIN`.
 
@@ -191,7 +194,7 @@ Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` nie 
 
 ### Późniejsze, osobne etapy
 
-1. Dokończenie frontendu. Credentialed CORS dla dokładnego `WEB_ORIGIN` jest włączony. Frontend ma katalog, koszyk gościa, formularz `cash` i stronę `/orders/{id}`. Nadal nie wywołuje `POST /api/v1/cart/merge`. Nie ma płatności online w formularzu ani strony powrotu z Przelewy24. Powrót przeglądarki nie potwierdza płatności.
+1. Dokończenie frontendu. Credentialed CORS dla dokładnego `WEB_ORIGIN` jest włączony. Frontend ma katalog, koszyk gościa, formularz `cash`, stronę `/orders/{id}` oraz odczyt administracyjny przez BFF. Nadal nie wywołuje `POST /api/v1/cart/merge`. Nie ma strony logowania, płatności online w formularzu ani strony powrotu z Przelewy24. Powrót przeglądarki nie potwierdza płatności.
 2. Dokończenie płatności online poza sandboxem. API checkoutu, workera i webhooka jest na `main`. Checkout online działa tylko w sandboxie. Zapisany token wraca jako stały `https://sandbox.przelewy24.pl/trnRequest/{TOKEN}`; host wymaga końcowego potwierdzenia podczas testu sandbox, bo specyfikacja REST 1.0.18 podaje bezpośrednio tylko adres produkcyjny. Stany `unknown` oraz `verification_requested` bez `verification_accepted` nie odzyskują się same; procedura jest w `docs/P24_RECONCILIATION.md`. Checkout nadal blokuje `seller_tax_status = unknown` oraz `registered` ze stawką `standard`. `paid` po wygaśnięciu rezerwacji nie rozwiązuje realizacji. Gotówkę potwierdza `POST /api/v1/admin/orders/:id/mark-paid`. Nieopłaconą gotówkę anuluje `POST /api/v1/admin/orders/:id/cancel`. Zwrot nadal nie istnieje. Przed dokumentami sprzedaży zostaje otwarte potwierdzenie księgowe agregacji VAT.
 
 ## 9. Otwarte decyzje na przyszłość
@@ -212,6 +215,8 @@ Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` nie 
 - Retencja danych.
 - Hosting i domeny produkcyjne.
 - Ograniczone uprawnienia użytkownika DB zamiast uprzywilejowanego połączenia `pg`.
+- Rotacja i przechowywanie `SESSION_TOKEN_KEY`, `RATE_LIMIT_HMAC_KEY` i `BFF_INTERNAL_SECRET` w produkcji. Repozytorium wymaga 32 bajtów base64 i nie opisuje sejfu, rotacji ani liczby instancji.
+- Adresy produkcyjnego proxy Nuxt w `BFF_TRUSTED_PEERS`. Pusta lista odrzuca logowanie i odczyt sesji. Hosting nie jest nazwany.
 - Domeny produkcyjne muszą być ustawione jako dokładny `WEB_ORIGIN`. Lokalny CORS zezwala na `http://localhost:3000`, `Access-Control-Allow-Credentials: true` i nagłówek `Idempotency-Key`. Wildcard originu nie jest używany.
 
 ## 10. Instrukcja dla Cursor przy wznowieniu
@@ -222,4 +227,4 @@ Koszyk gościa, koszyk konta, protokół blokad i `POST /api/v1/cart/merge` są 
 
 Przy wznowieniu sprawdź `pnpm exec supabase migration list`. W repozytorium po rezerwacjach jest też `20261119120000_payment_initialization.sql`. Szczegóły kolumn są w `docs/DATABASE.md`.
 
-Następny etap wybiera użytkownik. Tabele sesji, szyfr i limiter już są. Bez osobnej zgody nie wystawiaj logowania, odświeżenia, wylogowania ani BFF i nie dodawaj kolejnych tabel sesji. Bez osobnej zgody nie włączaj produkcyjnego checkoutu online, nie powtarzaj `transaction/register` ani `transaction/verify` i nie obchodź blokad `SELLER_TAX_STATUS_UNKNOWN` oraz `VAT_POLICY_NOT_CONFIRMED`. Nie uzupełniaj `shop_profile`, nie zmieniaj `seller_tax_status` i nie wybieraj `per_line` ani `per_rate` jako polityki sprzedaży. Nie dodawaj outboxa, dostawcy faktur, kuriera, fiskalizacji ani poczty tylko dlatego, że `docs/INTEGRATIONS.md` opisuje kierunek. Decyzje z sekcji 9 zostają do konsultacji z księgowym. Katalog, koszyk gościa, checkout gotówkowy i odczyt jednego zamówienia już są. Nie implementuj ich od nowa.
+Następny etap wybiera użytkownik. Logowanie hasłem, CSRF, odczyt sesji i BFF odczytu zamówień już są. Bez osobnej zgody nie dodawaj odświeżenia, wylogowania, strony logowania ani middleware stron i nie dodawaj kolejnych tabel sesji. Bez osobnej zgody nie włączaj produkcyjnego checkoutu online, nie powtarzaj `transaction/register` ani `transaction/verify` i nie obchodź blokad `SELLER_TAX_STATUS_UNKNOWN` oraz `VAT_POLICY_NOT_CONFIRMED`. Nie uzupełniaj `shop_profile`, nie zmieniaj `seller_tax_status` i nie wybieraj `per_line` ani `per_rate` jako polityki sprzedaży. Nie dodawaj outboxa, dostawcy faktur, kuriera, fiskalizacji ani poczty tylko dlatego, że `docs/INTEGRATIONS.md` opisuje kierunek. Decyzje z sekcji 9 zostają do konsultacji z księgowym. Katalog, koszyk gościa, checkout gotówkowy, odczyt jednego zamówienia i odczyt administracyjny już są. Nie implementuj ich od nowa.

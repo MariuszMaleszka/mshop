@@ -194,7 +194,7 @@ Jeden sklep, bez `store_id`. Produkt ma jedną kategorię. Wariantów produktów
 - `tax_status text not null` — bez wartości domyślnej
 - `vat_rate numeric(5,2) null`
 - `is_active boolean not null`
-- `stock_quantity integer null` — null oznacza brak śledzenia stanu; gdy podany, check `>= 0`
+- `stock_quantity integer null` — null oznacza nieznany stan i blokuje zakup kodem `STOCK_UNKNOWN`; gdy podany, check `>= 0`
 - `created_at timestamptz not null`
 - `updated_at timestamptz not null`
 
@@ -209,7 +209,7 @@ Jeden sklep, bez `store_id`. Produkt ma jedną kategorię. Wariantów produktów
 
 Null w `vat_rate` sam nie oznacza zwolnienia. Check `products_tax_check` wymaga `vat_rate is not null` przy `standard` i `zero_rated`.
 
-Stan magazynowy nie zależy od typu produktu. Usługa i produkt cyfrowy nie muszą go mieć. Zaawansowanego magazynu nie ma.
+Stan magazynowy nie zależy od typu produktu. `NULL` nie oznacza stanu nielimitowanego. Checkout odrzuca taki produkt kodem `STOCK_UNKNOWN`. Zaawansowanego magazynu nie ma.
 
 Lokalny skrypt `pnpm seed:local-catalog` dopisuje dwie aktywne kategorie i trzy aktywne produkty wyłącznie do PostgreSQL na `127.0.0.1:54322`, w bazie `postgres`. Jest idempotentny, nie nadpisuje różnych istniejących rekordów i nie zmienia `shop_profile`, klientów, zamówień, płatności, koszyków ani rezerwacji.
 
@@ -395,7 +395,7 @@ Jedna rezerwacja na pozycję zamówienia. `payment_method` jest kopią metody za
 - `created_at timestamptz not null`
 - `updated_at timestamptz not null`
 
-Aktywna rezerwacja wymaga produktu. Aktywna rezerwacja `online` wymaga `expires_at`, a aktywna rezerwacja `cash` wymaga pustego `expires_at`. Checkout online zapisuje termin jako `clock_timestamp() + 15 minutes` w transakcji zamówienia. Osobny proces `pnpm --filter @shop/api expiry:worker` co 30 sekund po zakończeniu poprzedniego przebiegu oznacza należne aktywne rezerwacje online całego zamówienia jako `expired`. Nie zmienia `stock_quantity`, statusu zamówienia ani statusu płatności. Checkout gotówkowy zostawia rezerwację `active` z pustym `expires_at`. Aplikacja nie przechodzi tej rezerwacji do `consumed` ani `released` i nie ma endpointu, który oznacza gotówkę jako opłaconą. Późniejsze `paid`, także po wygaśnięciu rezerwacji online, nie zmienia rezerwacji, `stock_quantity` ani `fulfillment_status`, więc samo potwierdzenie płatności nie rozwiązuje realizacji. Zwolnienie rezerwacji zwiększa ilość dostępną w checkoutcie, bo ta ilość jest stanem produktu pomniejszonym o aktywne rezerwacje. Złożony klucz `(order_item_id, product_id)` wskazuje `order_items (id, product_id)`, z `on update cascade` i `on delete set null (product_id)`. Usunięcie produktu przy rezerwacji `consumed`, `released` albo `expired` zeruje `product_id` i zostawia `order_item_id`. Przy statusie `active` ten sam zapis odrzuca `CHECK` i całe usunięcie produktu się wycofuje.
+Aktywna rezerwacja wymaga produktu. Aktywna rezerwacja `online` wymaga `expires_at`, a aktywna rezerwacja `cash` wymaga pustego `expires_at`. Checkout online zapisuje termin jako `clock_timestamp() + 15 minutes` w transakcji zamówienia. Osobny proces `pnpm --filter @shop/api expiry:worker` co 30 sekund po zakończeniu poprzedniego przebiegu oznacza należne aktywne rezerwacje online całego zamówienia jako `expired`. Nie zmienia `stock_quantity`, statusu zamówienia ani statusu płatności. Checkout gotówkowy zostawia rezerwację `active` z pustym `expires_at`. `POST /api/v1/admin/orders/:id/mark-paid` przechodzi ją w `consumed` i zmniejsza `stock_quantity`. Realizacja zostaje `new`. `POST /api/v1/admin/orders/:id/cancel` przechodzi nieopłaconą gotówkę w `released` i nie zmienia `stock_quantity`. Późniejsze `paid` płatności online, także po wygaśnięciu rezerwacji, nie zmienia rezerwacji, `stock_quantity` ani `fulfillment_status`, więc samo potwierdzenie Przelewy24 nie rozwiązuje realizacji. Zwolnienie rezerwacji zwiększa ilość dostępną w checkoutcie, bo ta ilość jest stanem produktu pomniejszonym o aktywne rezerwacje. Złożony klucz `(order_item_id, product_id)` wskazuje `order_items (id, product_id)`, z `on update cascade` i `on delete set null (product_id)`. Usunięcie produktu przy rezerwacji `consumed`, `released` albo `expired` zeruje `product_id` i zostawia `order_item_id`. Przy statusie `active` ten sam zapis odrzuca `CHECK` i całe usunięcie produktu się wycofuje.
 
 RLS jest włączone. Nie ma polityk. `anon` i `authenticated` nie mają uprawnień.
 
@@ -564,7 +564,7 @@ Zastosowane lokalnie, w tej kolejności:
 10. `20261118100300_inventory_reservations.sql` — `inventory_reservations` oraz klucze `(id, product_id)` i `(id, payment_method)`.
 11. `20261119120000_payment_initialization.sql` — `payments.initialization_status` i `payments.redirect_token` dla Przelewy24.
 12. `20261120120000_order_guest_session.sql` — `orders.session_id` dla skrótu sesji gościa, bez uzupełniania starych wierszy.
-13. `20261120140000_account_sessions.sql` — `account_sessions`, `login_challenges`, `auth_attempt_counters`. Bez tras logowania.
+13. `20261120140000_account_sessions.sql` — `account_sessions`, `login_challenges`, `auth_attempt_counters`. Logowanie doszło później w kodzie, bez nowej migracji.
 14. `20261120160000_revoke_session_table_api_grants.sql` — odebranie `service_role` uprawnień do tych trzech tabel. Rola z `DATABASE_URL` zostaje.
 
 RLS i indeksy tych tabel powstały razem z nimi.
