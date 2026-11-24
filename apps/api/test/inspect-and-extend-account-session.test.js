@@ -5,11 +5,12 @@ import { inspectAndExtendAccountSession } from '../src/account-session/inspect-a
 import { AccountSessionInspectError } from '../src/account-session/inspect-account-session.js'
 import { sha256Hex } from '../src/account-session/repository.js'
 import { encryptToken } from '../src/account-session/token-cipher.js'
+import { futureAccessToken } from './helpers/test-jwt.js'
 
 const key = randomBytes(32)
 const sessionHash = sha256Hex('session-id')
 const userId = randomUUID()
-const accessToken = 'access-token-value'
+const accessToken = futureAccessToken(3600, { sub: userId })
 const refreshToken = 'refresh-token-value'
 
 function sealed(value) {
@@ -63,12 +64,15 @@ function database({ row = null, rowCount = 1, fail = null } = {}) {
   }
 }
 
-async function run(store) {
-  return inspectAndExtendAccountSession({
-    database: store,
-    sessionHash,
-    key,
-  })
+async function run(store, dependencies = {}) {
+  return inspectAndExtendAccountSession(
+    {
+      database: store,
+      sessionHash,
+      key,
+    },
+    dependencies,
+  )
 }
 
 function updates(store) {
@@ -96,27 +100,61 @@ describe('inspectAndExtendAccountSession', () => {
 
   it('does not extend a session that is not ready', async () => {
     const cases = [
-      [null, 'not_found'],
-      [readyRow({ idle_valid: false }), 'expired'],
-      [readyRow({ refresh_state: 'pending', pending_fresh: true }), 'pending'],
+      [null, 'not_found', 0],
+      [readyRow({ idle_valid: false }), 'expired', 0],
       [
-        readyRow({ refresh_state: 'pending', pending_fresh: false }),
-        'stale_pending',
+        readyRow({ refresh_state: 'pending', pending_fresh: true }),
+        'pending',
+        0,
       ],
-      [readyRow({ refresh_state: 'unknown' }), 'unknown'],
-      [readyRow({ refresh_state: 'closed' }), 'invalid'],
+      [readyRow({ refresh_state: 'unknown' }), 'unknown', 0],
+      [readyRow({ refresh_state: 'closed' }), 'invalid', 0],
     ]
 
-    for (const [row, status] of cases) {
+    for (const [row, status, updateCount] of cases) {
       const store = database({ row })
       const result = await run(store)
 
       assert.equal(result.status, status)
-      assert.equal(updates(store).length, 0)
-      assert.equal(store.calls.length, 1)
-      assert.equal(store.calls[0].params[0], sessionHash)
+      assert.equal(updates(store).length, updateCount)
       assert.equal(JSON.stringify(result).includes(accessToken), false)
     }
+  })
+
+  it('marks a stale pending session unknown before returning', async () => {
+    const store = database({
+      row: readyRow({ refresh_state: 'pending', pending_fresh: false }),
+      rowCount: 1,
+    })
+    const result = await run(store)
+
+    assert.equal(result.status, 'stale_pending')
+    assert.equal(updates(store).length, 1)
+    assert.equal(updates(store)[0].sql.includes('unknown'), true)
+    assert.equal(JSON.stringify(result).includes(accessToken), false)
+  })
+
+  it('refreshes when the access token is expired', async () => {
+    const store = database({ row: readyRow() })
+    const refreshed = {
+      status: 'ready',
+      userId,
+      accessToken: futureAccessToken(3600, { sub: userId }),
+      refreshToken: 'next-refresh',
+      keyVersion: 1,
+    }
+    const result = await run(store, {
+      inspect: async () => ({
+        status: 'ready',
+        userId,
+        accessToken: 'eyJhbGciOiJub25lIn0.eyJleHAiOjF9.x',
+        refreshToken,
+        keyVersion: 1,
+      }),
+      refresh: async () => refreshed,
+    })
+
+    assert.deepEqual(result, refreshed)
   })
 
   it('drops decrypted tokens when the update matches nothing', async () => {

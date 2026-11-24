@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { encryptToken, TokenCipherError } from './token-cipher.js'
 
 const SESSION_COLUMNS = `
@@ -238,6 +238,9 @@ export async function saveRefreshedSession(
   database,
   { idHash, generation, session },
 ) {
+  assertSessionHash(idHash)
+  assertGeneration(generation)
+
   try {
     const result = await database.query(
       `
@@ -259,6 +262,8 @@ export async function saveRefreshedSession(
           and refresh_generation = $2
           and refresh_state = 'pending'
           and refresh_started_at > now() - interval '15 seconds'
+          and absolute_expires_at > now()
+          and idle_expires_at > now()
       `,
       [
         idHash,
@@ -278,6 +283,124 @@ export async function saveRefreshedSession(
   } catch (error) {
     throw mapWriteError(error)
   }
+}
+
+export async function beginAccountSessionRefresh(
+  database,
+  { idHash, generation, refreshTokenHash },
+) {
+  assertSessionHash(idHash)
+  assertGeneration(generation)
+
+  if (
+    typeof refreshTokenHash !== 'string' ||
+    !SESSION_HASH.test(refreshTokenHash)
+  ) {
+    throw new AccountSessionWriteError('rejected')
+  }
+
+  try {
+    const result = await database.query(
+      `
+        update public.account_sessions
+        set
+          refresh_state = 'pending',
+          refresh_generation = $2,
+          refresh_started_at = now(),
+          refresh_token_hash = $3
+        where id_hash = $1
+          and refresh_state = 'ready'
+          and absolute_expires_at > now()
+          and idle_expires_at > now()
+        returning csrf_token_hash, key_version, user_id
+      `,
+      [idHash, generation, refreshTokenHash],
+    )
+
+    return result.rows[0] ?? null
+  } catch (error) {
+    throw mapWriteError(error)
+  }
+}
+
+export async function markAccountSessionUnknown(
+  database,
+  { idHash, generation },
+) {
+  assertSessionHash(idHash)
+  assertGeneration(generation)
+
+  try {
+    const result = await database.query(
+      `
+        update public.account_sessions
+        set
+          refresh_state = 'unknown',
+          refresh_generation = null,
+          refresh_started_at = null,
+          refresh_token_hash = null,
+          access_ciphertext = null,
+          access_nonce = null,
+          access_tag = null,
+          refresh_ciphertext = null,
+          refresh_nonce = null,
+          refresh_tag = null
+        where id_hash = $1
+          and refresh_state = 'pending'
+          and refresh_generation = $2
+      `,
+      [idHash, generation],
+    )
+
+    return result.rowCount
+  } catch (error) {
+    throw mapWriteError(error)
+  }
+}
+
+export async function markStalePendingUnknown(database, { idHash }) {
+  assertSessionHash(idHash)
+
+  try {
+    const result = await database.query(
+      `
+        update public.account_sessions
+        set
+          refresh_state = 'unknown',
+          refresh_generation = null,
+          refresh_started_at = null,
+          refresh_token_hash = null,
+          access_ciphertext = null,
+          access_nonce = null,
+          access_tag = null,
+          refresh_ciphertext = null,
+          refresh_nonce = null,
+          refresh_tag = null
+        where id_hash = $1
+          and refresh_state = 'pending'
+          and refresh_started_at is not null
+          and (
+            refresh_started_at > now()
+            or refresh_started_at <= now() - interval '15 seconds'
+          )
+      `,
+      [idHash],
+    )
+
+    return result.rowCount
+  } catch (error) {
+    throw mapWriteError(error)
+  }
+}
+
+export function createRefreshGeneration(random = randomUUID) {
+  const value = random()
+
+  if (typeof value !== 'string' || !USER_ID.test(value)) {
+    throw new AccountSessionWriteError('rejected')
+  }
+
+  return value
 }
 
 export async function deleteAccountSession(database, idHash) {
@@ -454,4 +577,16 @@ function mapWriteError(error) {
   }
 
   return new AccountSessionWriteError('unavailable')
+}
+
+function assertSessionHash(idHash) {
+  if (typeof idHash !== 'string' || !SESSION_HASH.test(idHash)) {
+    throw new AccountSessionWriteError('rejected')
+  }
+}
+
+function assertGeneration(generation) {
+  if (typeof generation !== 'string' || !USER_ID.test(generation)) {
+    throw new AccountSessionWriteError('rejected')
+  }
 }

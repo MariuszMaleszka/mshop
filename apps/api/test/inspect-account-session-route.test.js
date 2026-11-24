@@ -203,6 +203,7 @@ describe('internal account session inspect', () => {
       ['not_found', 401, 'invalid_session'],
       ['expired', 401, 'invalid_session'],
       ['pending', 503, 'session_pending'],
+      ['rate_limited', 429, 'rate_limited'],
       ['stale_pending', 401, 'invalid_session'],
       ['unknown', 401, 'invalid_session'],
       ['invalid', 401, 'invalid_session'],

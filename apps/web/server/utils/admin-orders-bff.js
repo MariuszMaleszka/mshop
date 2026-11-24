@@ -22,6 +22,7 @@ const UPSTREAM_CODES = {
   401: 'UNAUTHORIZED',
   403: 'FORBIDDEN',
   404: 'NOT_FOUND',
+  429: 'RATE_LIMITED',
   503: 'SERVICE_UNAVAILABLE',
 }
 
@@ -92,11 +93,15 @@ async function readSession(event, options) {
   })
 
   if (session.ok !== true) {
-    return {
-      ok: false,
-      result:
-        session.code === 'invalid_session' ? unauthorized() : unavailable(),
+    if (session.code === 'invalid_session') {
+      return { ok: false, result: unauthorized() }
     }
+
+    if (session.code === 'rate_limited') {
+      return { ok: false, result: rateLimited() }
+    }
+
+    return { ok: false, result: unavailable() }
   }
 
   return {
@@ -281,6 +286,10 @@ function validationFailure() {
 
 function unauthorized() {
   return failure(401, 'UNAUTHORIZED', 'Authentication required')
+}
+
+function rateLimited() {
+  return failure(429, 'RATE_LIMITED', 'Too many requests')
 }
 
 function unavailable() {

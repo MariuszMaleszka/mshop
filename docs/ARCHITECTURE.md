@@ -8,7 +8,7 @@ MVP nie jest marketplace'em ani systemem SaaS multi-tenant.
 ## 2. Komponenty
 
 ### `apps/web` — Nuxt 4
-Aplikacja jest w JavaScript, bez TypeScriptu w kodzie źródłowym. Storefront ma katalog, koszyk gościa, formularz checkoutu gotówkowego i stronę odczytu jednego zamówienia. Formularz wysyła wyłącznie `paymentMethod = cash`. Nie pokazuje płatności online jako działającej opcji i nie ma strony powrotu z Przelewy24. Nie ma strony logowania ani konta klienta. Panel ma layout `admin` oraz odczyt `/admin/orders` i `/admin/orders/:id` przez BFF Nuxt.
+Aplikacja jest w JavaScript, bez TypeScriptu w kodzie źródłowym. Storefront ma katalog, koszyk gościa, formularz checkoutu gotówkowego, stronę odczytu jednego zamówienia oraz stronę logowania `/login`. Formularz wysyła wyłącznie `paymentMethod = cash`. Nie pokazuje płatności online jako działającej opcji i nie ma strony powrotu z Przelewy24. Nie ma profilu klienta, rejestracji ani resetu hasła. Panel ma layout `admin` oraz odczyt `/admin/orders` i `/admin/orders/:id` przez BFF Nuxt.
 
 - publiczny katalog;
 - koszyk gościa i przejście do checkoutu gotówkowego;
@@ -42,7 +42,7 @@ API jest w JavaScript, w modułach ES. Zaimplementowany jest health check, publi
 ## 3. Zasady przepływu danych
 1. Nuxt komunikuje się z Express przez HTTPS/REST.
 2. Katalog, koszyk, checkout, sesja gościa i odczyt zamówienia klienta idą z przeglądarki do Expressa przez `useApi()`. To wywołanie samo nie dokłada `Authorization`. Gość używa ciasteczka `shop_guest_session` wprost wobec Expressa. Odczyt zamówień administratora idzie do Nuxt. Serwer Nuxt dokłada Bearer z sesji opisanej w `docs/AUTH-SESSION.md`. Przeglądarka nie przechowuje access tokenu ani refresh tokenu.
-3. Express weryfikuje access token. Hasło przyjmuje tylko wewnętrzne logowanie z zaufanego Nuxt. Proces nie używa `SUPABASE_SERVICE_ROLE_KEY`. Limiter logowania i CSRF jest wołany przez te trasy. Odświeżenie tokenu nie jest zaimplementowane. Adres JWKS powstaje z `SUPABASE_URL`: `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. Jedna funkcja `createRemoteJWKSet` powstaje przy starcie procesu i nie pobiera kluczy, dopóki pierwsza chroniona trasa nie sprawdzi tokenu. Zestaw jest cache'owany przez 10 minut. Nieznany `kid` powoduje ponowne pobranie po 30 sekundach, więc rotacja klucza nie wymaga restartu. Dozwolone algorytmy to `ES256` i `RS256`. Brak nagłówka albo token odrzucony daje HTTP 401. Niedostępny JWKS daje HTTP 503, a nie 401. Middleware `requireAuth` nie obejmuje całego API. `GET /api/v1/health` i `GET /api/v1/health/ready` pozostają publiczne.
+3. Express weryfikuje access token. Hasło przyjmuje tylko wewnętrzne logowanie z zaufanego Nuxt. Proces nie używa `SUPABASE_SERVICE_ROLE_KEY`. Limiter logowania, CSRF i odświeżenia jest wołany przez te trasy. Odświeżenie access tokenu wykonuje `inspectAndExtendAccountSession` przez `refreshAccountSession`, gdy `exp` wygasł. Adres JWKS powstaje z `SUPABASE_URL`: `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. Jedna funkcja `createRemoteJWKSet` powstaje przy starcie procesu i nie pobiera kluczy, dopóki pierwsza chroniona trasa nie sprawdzi tokenu. Zestaw jest cache'owany przez 10 minut. Nieznany `kid` powoduje ponowne pobranie po 30 sekundach, więc rotacja klucza nie wymaga restartu. Dozwolone algorytmy to `ES256` i `RS256`. Brak nagłówka albo token odrzucony daje HTTP 401. Niedostępny JWKS daje HTTP 503, a nie 401. Middleware `requireAuth` nie obejmuje całego API. `GET /api/v1/health` i `GET /api/v1/health/ready` pozostają publiczne.
 4. Express sprawdza uprawnienia do konkretnej operacji i zasobu. `requireAdmin` wykonuje `SELECT 1 FROM public.user_roles WHERE user_id = $1 AND role = 'admin' LIMIT 1`. Brak wcześniejszego `req.auth.userId` daje HTTP 401. Brak wiersza daje HTTP 403. Błąd zapytania daje HTTP 503 i nie jest traktowany jako brak roli. Claim roli w JWT nie jest używany. Middleware nie jest globalne. Koszyk konta sprawdza właściciela w SQL przez `req.auth.userId`. `GET /api/v1/orders/:id` sprawdza właściciela w SQL: konto po `orders.user_id`, gość po `orders.session_id`. Lista zamówień klienta pozostaje przy przyszłym endpoincie. Administrator czyta `GET /api/v1/admin/orders`.
 5. Operacje biznesowe są wykonywane w backendzie.
 6. Backend zapisuje dane w PostgreSQL.
@@ -85,7 +85,7 @@ shop/
 
 ## 5. Moduły domenowe backendu
 
-Poniższy podział jest docelowy. Zaimplementowany jest publiczny odczyt katalogu, koszyk gościa, koszyk konta, jawne scalenie koszyków, checkout gotówkowy, sandboxowy checkout online, odczyt jednego zamówienia oraz administracyjne odczyty i operacje gotówki. Produkcyjny checkout online pozostaje wyłączony. Lista zamówień klienta i powiadomienia nie są jeszcze zaimplementowane. Panel ma layout `admin` oraz strony `/admin/orders` i `/admin/orders/:id`. Obie tylko czytają przez BFF Nuxt, po `onMounted`. Nie ma strony logowania ani middleware, które chowa layout przed odpowiedzią. Pozostałe moduły panelu nie mają stron. Trasy administracyjne Expressa to `GET /api/v1/admin/orders`, `GET /api/v1/admin/orders/:id`, `POST /api/v1/admin/orders/:id/mark-paid` i `POST /api/v1/admin/orders/:id/cancel`.
+Poniższy podział jest docelowy. Zaimplementowany jest publiczny odczyt katalogu, koszyk gościa, koszyk konta, jawne scalenie koszyków, checkout gotówkowy, sandboxowy checkout online, odczyt jednego zamówienia, strona `/login` oraz administracyjne odczyty i operacje gotówki. Produkcyjny checkout online pozostaje wyłączony. Lista zamówień klienta i powiadomienia nie są jeszcze zaimplementowane. Panel ma layout `admin` oraz strony `/admin/orders` i `/admin/orders/:id`. Obie tylko czytają przez BFF Nuxt, po `onMounted`. Nie ma middleware, które chowa layout przed odpowiedzią. Pozostałe moduły panelu nie mają stron. Trasy administracyjne Expressa to `GET /api/v1/admin/orders`, `GET /api/v1/admin/orders/:id`, `POST /api/v1/admin/orders/:id/mark-paid` i `POST /api/v1/admin/orders/:id/cancel`.
 
 - `auth`: weryfikacja tożsamości i kontekst użytkownika; bez implementowania własnego systemu haseł.
 - `customers`: profile, typ klienta, adresy.
@@ -125,7 +125,7 @@ Panel jest częścią aplikacji Nuxt i ma layout `admin`, osobny od layoutu skle
 - `/admin/payments`
 - `/admin/settings`
 
-Middleware Nuxt nie istnieje i nie zastąpiłoby `requireAdmin`. Każdy endpoint administracyjny sprawdza rolę w Expressie. Szczegóły sesji są w `docs/AUTH-SESSION.md`. Logowanie hasłem i odczyt zamówień przez BFF są zaimplementowane. Odświeżenie, wylogowanie i ochrona stron nie są. Kontrakt `requireAuth` i `requireAdmin` zostaje.
+Middleware Nuxt nie istnieje i nie zastąpiłoby `requireAdmin`. Każdy endpoint administracyjny sprawdza rolę w Expressie. Szczegóły sesji są w `docs/AUTH-SESSION.md`. Logowanie hasłem, odświeżenie access tokenu przy inspect oraz odczyt zamówień przez BFF są zaimplementowane. Wylogowanie i ochrona stron nie są. Kontrakt `requireAuth` i `requireAdmin` zostaje.
 
 ## 8. Rozszerzalność
 Projektuj katalog tak, aby `product_type` rozróżniał:

@@ -2,15 +2,15 @@
 
 **Stan na:** 24 listopada 2026.
 
-Ten dokument jest jedyną szczegółową specyfikacją sesji. Tabele `account_sessions`, `login_challenges` i `auth_attempt_counters`, szyfrowanie AES-256-GCM oraz limiter PostgreSQL są w repozytorium. Działają bootstrap CSRF, logowanie hasłem, zapis sesji, odczyt sesji z przedłużeniem bezczynności oraz odczyt zamówień administratora przez Nuxt BFF. Odświeżenie tokenu, wylogowanie, strona logowania i middleware ochrony stron nadal nie są zaimplementowane. Kontrakt `requireAuth` i `requireAdmin` zostaje. Checkout i Przelewy24 są poza zakresem.
+Ten dokument jest jedyną szczegółową specyfikacją sesji. Tabele `account_sessions`, `login_challenges` i `auth_attempt_counters`, szyfrowanie AES-256-GCM oraz limiter PostgreSQL są w repozytorium. Działają bootstrap CSRF, strona `/login`, logowanie hasłem, zapis sesji, odczyt sesji z przedłużeniem bezczynności, odświeżenie access tokenu podczas inspect oraz odczyt zamówień administratora przez Nuxt BFF. Wylogowanie i middleware ochrony stron nadal nie są zaimplementowane. Kontrakt `requireAuth` i `requireAdmin` zostaje. Checkout i Przelewy24 są poza zakresem.
 
-Supabase Auth zostaje źródłem tożsamości. Administrator nie dostaje osobnego konta. Rola jest czytana z `public.user_roles` przy każdym żądaniu Expressa. Przeglądarka nie zapisuje tokenów w `localStorage` ani `sessionStorage`. Proces Nuxt i proces Express nie trzymają sesji użytkowników w zmiennych globalnych.
+Supabase Auth zostaje źródłem tożsamości. Administrator nie dostaje osobnego konta. Rola jest czytana z `public.user_roles` przy każdym żądaniu Expressa. Przeglądarka nie zapisuje access tokenu ani refresh tokenu w `localStorage` ani `sessionStorage`. Proces Nuxt i proces Express nie trzymają sesji użytkowników w zmiennych globalnych.
 
 ## 1. Co jest dziś
 
-Express weryfikuje access token z nagłówka `Authorization: Bearer` przez JWKS. Przeglądarka loguje się przez `POST /api/v1/auth/login` na Nuxt. Express przyjmuje logowanie tylko z zaufanego Nuxt przez `POST /api/v1/internal/login`. Nie ma formularza logowania w Vue, odświeżenia tokenu ani wylogowania.
+Express weryfikuje access token z nagłówka `Authorization: Bearer` przez JWKS. Przeglądarka loguje się przez stronę Nuxt `/login` (`apps/web/app/pages/login.vue`), która najpierw woła `POST /api/v1/auth/csrf`, a potem `POST /api/v1/auth/login` na własny host. Express przyjmuje hasło tylko z zaufanego Nuxt przez `POST /api/v1/internal/login`. Sekret CSRF challenge i sesji trzyma w przeglądarce wyłącznie pamięć modułu `apps/web/app/modules/account-login/csrf-memory.js`, poza szablonem Vue. Access token i refresh token nie wracają do HTML ani do `localStorage`.
 
-`useApi()` sam nie dokłada Bearer i nadal woła publiczne `apiBase` dla katalogu, koszyka, checkoutu, sesji gościa i odczytu zamówienia klienta. Lista i szczegóły w `/admin/orders` nie używają `useApi()`. Po `onMounted` wołają ten sam host Nuxt: `GET /api/v1/admin/orders` i `GET /api/v1/admin/orders/:id`. Serwer Nuxt czyta ciasteczko sesji, woła `POST /api/v1/internal/account-sessions/inspect` i do Expressa wysyła jedno `GET` z `Authorization: Bearer` wziętym z sesji. Przeglądarka tego nagłówka nie wysyła. Brak sesji daje 401. Sesja bez wiersza `admin` daje 403 z Expressa. Nuxt nie sprawdza roli. Nie ma middleware stron, więc szablon panelu jest widoczny przed odpowiedzią JSON. SSR tych stron renderuje stan ładowania, bo pobranie jest tylko w `onMounted`.
+`useApi()` sam nie dokłada Bearer i nadal woła publiczne `apiBase` dla katalogu, koszyka, checkoutu, sesji gościa i odczytu zamówienia klienta. Lista i szczegóły w `/admin/orders` nie używają `useApi()`. Po `onMounted` wołają ten sam host Nuxt: `GET /api/v1/admin/orders` i `GET /api/v1/admin/orders/:id`. Serwer Nuxt czyta ciasteczko sesji przez `readAccountSession()`, woła `POST /api/v1/internal/account-sessions/inspect` i do Expressa wysyła jedno `GET` z `Authorization: Bearer` wziętym z wyniku inspect. Przeglądarka tego nagłówka nie wysyła. Inspect woła `inspectAndExtendAccountSession`: przy ważnym JWT przedłuża idle, a przy wygasłym `exp` uruchamia `refreshAccountSession` przed zwrotem tokenów. Brak sesji daje 401. Sesja bez wiersza `admin` daje 403 z Expressa. Limit odświeżeń daje 429 `rate_limited`. Nuxt nie sprawdza roli. Nie ma middleware stron, więc szablon panelu jest widoczny przed odpowiedzią JSON. SSR tych stron renderuje stan ładowania, bo pobranie jest tylko w `onMounted`. Po sukcesie logowania strona przechodzi na `/` i nie wnioskuje roli z sesji.
 
 Gość zostaje przy `shop_guest_session`. To nie jest sesja konta.
 
@@ -24,7 +24,7 @@ Jedno konto ma jeden mechanizm uwierzytelnienia: sesję BFF. Uprawnienie jest os
 | --- | --- | --- | --- |
 | Niezalogowany klient | Dalej `shop_guest_session` wprost do Expressa | Bez zmian | Bez zmian, dopóki osobna decyzja nie ruszy koszyka gościa |
 | Zalogowany klient | Ta sama sesja konta co administrator | Trasy konta nadal wymagają Bearer wprost do Expressa. Storefront ich tak nie woła | Te same trasy przechodzą przez Nuxt. Express dalej dostaje Bearer od serwera Nuxt |
-| Administrator | Ta sama sesja konta. Brak wiersza `admin` daje 403 | Logowanie hasłem przez BFF jest zaimplementowane, bez strony logowania. Odczyt listy i szczegółów zamówień idzie przez Nuxt. Odświeżenia i wylogowania nie ma | `mark-paid` i `cancel`, gdy panel ma je wołać. Middleware stron nie zastępuje `requireAdmin` |
+| Administrator | Ta sama sesja konta. Brak wiersza `admin` daje 403 | Strona `/login`, CSRF, logowanie i odświeżenie access tokenu przy inspect są zaimplementowane. Odczyt listy i szczegółów zamówień idzie przez Nuxt. Wylogowania i middleware stron nie ma | `mark-paid` i `cancel`, gdy panel ma je wołać. Middleware stron nie zastępuje `requireAdmin` |
 
 Jedna przeglądarka ma jedno ciasteczko sesji konta. Logowanie w tej przeglądarce unieważnia poprzedni wiersz wskazany przez dotychczasowe ciasteczko i wydaje nowy identyfikator. Inne urządzenia mogą mieć własne wiersze. Nie powstaje drugie ciasteczko „administratora”.
 
@@ -72,9 +72,11 @@ Zmienna startuje pusta w każdym środowisku. Pusta lista odrzuca wewnętrzne wy
 
 ## 6. Odświeżenie i przerwana rotacja
 
-`FOR UPDATE` serializuje żądania jednego wiersza. Nie łączy zapisu PostgreSQL z rotacją w Supabase Auth. Trzymanie transakcji i blokady przez czas wywołania Auth jest odrzucone: pula `pg` ma domyślnie najwyżej 20 połączeń, a zawieszone żądanie trzymałoby połączenie i blokadę wiersza.
+**Status implementacji:** odświeżenie jest w kodzie. Wejście to `inspectAndExtendAccountSession` w `apps/api/src/account-session/inspect-and-extend-account-session.js`. Ważność access tokenu ustala `readAccessTokenExpiry` (`decodeJwt` z `jose`, wyłącznie claim `exp`). Token z przyszłym `exp` nie woła Auth i kończy się `extendAccountSessionIdleExpiry`. Wygasły `exp` albo brak poprawnego JWT z `exp` prowadzi odpowiednio do `refreshAccountSession` albo statusu `invalid`. Sieć do Supabase to `refreshSupabaseSession` w `apps/api/src/auth/supabase-refresh.js` (`POST /auth/v1/token?grant_type=refresh_token`, limit 8 sekund).
 
-Gdy access token jest jeszcze ważny, żądanie go używa i nie woła Auth. W przeciwnym razie jedna krótka transakcja zapisuje `pending`, nowy `refresh_generation` i skrót refresh tokenu, który za chwilę wyśle. Commit jest przed siecią. Wywołanie Auth ma limit 8 sekund. Zapis nowej pary jest `UPDATE`, nie `INSERT`, i wymaga tej generacji, stanu `pending` oraz wieku poniżej 15 sekund.
+Nie łączy zapisu PostgreSQL z rotacją w Supabase Auth. Trzymanie transakcji i blokady wiersza przez czas wywołania Auth jest odrzucone.
+
+Gdy access token jest jeszcze ważny według `exp`, żądanie go używa i nie woła Auth. W przeciwnym razie `refreshAccountSession` najpierw woła `consumeRefreshRateLimit` (kubełek po `sessionHash`), potem `beginAccountSessionRefresh`: jeden `UPDATE` ustawia `pending`, nowy UUID `refresh_generation` (`createRefreshGeneration`) i `refresh_token_hash` skrótu refresh tokenu, który zaraz pójdzie do Auth. Commit jest przed siecią. Wywołanie Auth ma limit 8 sekund. Zapis nowej pary to `saveRefreshedSession`: `UPDATE`, nie `INSERT`. Warunek wymaga tej samej generacji, stanu `pending`, `refresh_started_at` młodszego niż 15 sekund oraz nadal ważnych `absolute_expires_at` i `idle_expires_at`. Absolute lifetime 12 godzin nie jest przedłużany. Po udanym zapisie idle jest przedłużane przez `extendAccountSessionIdleExpiry`.
 
 Jedna reguła na każdy wynik. Starego refresh tokenu nie wysyła się drugi raz, gdy poprzednie wywołanie mogło już wykonać rotację. `supabase/config.toml` nie ustawia interwału ponownego użycia i projekt go nie zakłada. Nie ma stanu `closed`.
 
@@ -98,9 +100,9 @@ Logout kasuje wiersz od razu, także w trakcie `pending`. Jeśli A zdąży zapis
 
 Gdy A dostanie nową parę, a warunkowy zapis nie znajdzie wiersza, A nie robi `INSERT` i nie oddaje pary klientowi. W tym samym żądaniu próbuje unieważnić nowy refresh token, z limitem 8 sekund. Jawny sukces albo jawna odmowa kończy próbę. Wynik nieznany daje jedną ponowną próbę, też 8 sekund. Drugi wynik nieznany kończy próby. Token nie jest zapisywany do późniejszego unieważnienia, nie wraca do klienta i nie jest wysyłany ponownie jako refresh. Stary refresh token też nie jest wysyłany ponownie. Jeśli ta próba się nie uda, nowy refresh token zostaje ważny po stronie Supabase.
 
-### Specyfikacja testu wyścigu
+### Specyfikacja testu wyścigu logout × refresh
 
-Testu jeszcze nie ma. Ma sprawdzić sam zapis, bez prawdziwego Supabase, przez podstawioną odpowiedź.
+Testu wyścigu z wylogowaniem jeszcze nie ma, bo logout nie jest zaimplementowany. Specyfikacja zostaje poniżej. Osobno istnieją już testy równoległego refresh tej samej sesji, spóźnionej odpowiedzi oraz warunkowego zapisu w `apps/api/test/refresh-account-session.test.js` i testach integracyjnych repository.
 
 Przypadek skasowania w trakcie `pending`:
 
@@ -125,7 +127,9 @@ W obu przypadkach log i odpowiedź HTTP nie zawierają tokenów.
 
 ## 8. Wylogowanie
 
-Express kasuje wiersz sesji, wygasza ciasteczko i woła unieważnienie refresh tokenu w Supabase tylko wtedy, gdy ten token został odczytany przed skasowaniem wiersza. Każde nowe żądanie szuka wiersza i bez niego dostaje 401.
+**Status:** niezaimplementowane. Poniższy opis to zaakceptowany model docelowy, nie bieżący kod.
+
+Express ma kasować wiersz sesji, wygaszać ciasteczko i wołać unieważnienie refresh tokenu w Supabase tylko wtedy, gdy ten token został odczytany przed skasowaniem wiersza. Każde nowe żądanie szuka wiersza i bez niego dostaje 401.
 
 Logout nie anuluje operacji, która już trwa. Nie przerywa rozpoczętej transakcji ani wywołania, które zdążyło przejść kontrolę sesji. Taka operacja może zakończyć się także zapisem danych. Sprawdzenie, że wiersz jeszcze istnieje, nie zamyka wyścigu: logout może usunąć go po sprawdzeniu, a przed commitem. Domknięcie tego wyścigu wymagałoby trzymania blokady wiersza sesji przez cały zapis biznesowy. Tego kosztu projekt nie przyjmuje i takiej gwarancji nie daje.
 
@@ -211,7 +215,7 @@ Pola wejściowe są kodowane długością w bajtach, więc sklejenie sąsiednich
 | Bootstrap CSRF | `consumeCsrfRateLimit` | HMAC celu `csrf` i IP | 60 | 15 minut |
 | Odświeżenie jednej sesji | `consumeRefreshRateLimit` | HMAC celu `refresh` i identyfikatora sesji | 30 | 15 minut |
 
-`purpose` w bazie ma wartość `login_pair`, nie `login`. Nie ma globalnej blokady samego e-maila. Licznik pary podnosi się także wtedy, gdy konta nie ma, i zawsze przed wywołaniem Supabase. `consumeRefreshRateLimit` woła się tylko przed rzeczywistym wywołaniem Auth. Samo sprawdzenie sesji, młody `pending`, stan `unknown` i każde żądanie, które nie woła Auth, tego licznika nie podnosi.
+`purpose` w bazie ma wartość `login_pair`, nie `login`. Nie ma globalnej blokady samego e-maila. Licznik pary podnosi się także wtedy, gdy konta nie ma, i zawsze przed wywołaniem Supabase. `consumeRefreshRateLimit` woła się na początku `refreshAccountSession`, przed `beginAccountSessionRefresh` i przed Auth. Żądanie, które używa jeszcze ważnego access tokenu, młody `pending` zauważony przy inspect, stan `unknown` i każde żądanie, które w ogóle nie wchodzi w `refreshAccountSession`, tego licznika nie podnosi. Odmowa limitu zostawia wiersz w `ready` i wraca jako HTTP 429 `rate_limited` z trasy inspect.
 
 Okno ma 15 minut i jest wyrównane do stałych granic od epoki. `window_start` liczy PostgreSQL przez `date_bin`, więc instancje nie biorą czasu ze swoich zegarów. Zapis to jedno `INSERT ... ON CONFLICT DO UPDATE`, a przyrost ma warunek `count < próg`. Żądanie, które dostaje wiersz z `RETURNING`, jest dozwolone. Próg włącznie jest dozwolony. Brak wiersza w `RETURNING` oznacza odmowę. Odmowa nie zwiększa licznika i go nie zeruje. Równoległe żądania serializują się na konflikcie wiersza, więc nie przechodzą wszystkie tylko dlatego, że każde zdążyło zobaczyć wartość poniżej progu.
 
@@ -270,10 +274,10 @@ Moduł `nuxt-security` jest w katalogu Nuxt i obsługuje nonce, ale jego domyśl
 
 1. Zrobione: tabele wyzwań, sesji i liczników.
 2. Zrobione: limiter w Expressie, test awarii bazy i weryfikacja wewnętrznego wywołania. Podrobiony `X-Forwarded-For` i peer spoza listy są odrzucane. Adres do limitera przekazują bootstrap CSRF i logowanie.
-3. Zrobione: bootstrap CSRF i logowanie hasłem, oba za limiterem. Nuxt ustawia ciasteczko sesji. Nie ma strony logowania.
-4. Zrobione częściowo: rozpoznanie sesji i jedno przedłużenie bezczynności przy odczycie. `POST /api/v1/internal/account-sessions/inspect` woła `inspectAndExtendAccountSession`. Młody `pending` daje 503 `session_pending` i nie przedłuża sesji. Gotowa sesja dostaje nowe `idle_expires_at` w granicach 30 minut i 12 godzin. Rotacji tokenu w Supabase nie ma. `refresh_started_at` w przyszłości jest stanem `invalid`, nie młodym `pending`.
-5. Zrobione dla odczytu: `/admin/orders` i `/admin/orders/:id` idą przez Nuxt BFF. Express nadal sprawdza Bearer, `requireAuth` i `requireAdmin`. Middleware stron, odświeżenie i wylogowanie nie są zrobione.
-6. Do zrobienia: odświeżenie ze stanem `pending` / `unknown`, zapis warunkowy po `refresh_generation` oraz wylogowanie. Test wyścigu nie odtwarza skasowanego wiersza. Specyfikacja zostaje w sekcjach 6–9. Kodu tej rotacji nie ma.
+3. Zrobione: bootstrap CSRF, strona `/login` i logowanie hasłem, oba za limiterem. Nuxt ustawia ciasteczko sesji.
+4. Zrobione: rozpoznanie sesji, przedłużenie bezczynności i odświeżenie access tokenu przy odczycie. `POST /api/v1/internal/account-sessions/inspect` woła `inspectAndExtendAccountSession`. Młody `pending` daje 503 `session_pending` i nie przedłuża sesji. Gotowa sesja z ważnym `exp` dostaje nowe `idle_expires_at` w granicach 30 minut i 12 godzin. Wygasły `exp` uruchamia `refreshAccountSession` ze stanem `pending`, nowym `refresh_generation` i warunkowym `saveRefreshedSession`. `refresh_started_at` w przyszłości jest stanem `invalid`, nie młodym `pending`. Limit odświeżeń daje 429 `rate_limited`.
+5. Zrobione dla odczytu: `/admin/orders` i `/admin/orders/:id` idą przez Nuxt BFF. Express nadal sprawdza Bearer, `requireAuth` i `requireAdmin`. Middleware stron i wylogowanie nie są zrobione.
+6. Do zrobienia: wylogowanie według sekcji 8 oraz test wyścigu logout × refresh z sekcji 7. Specyfikacja zostaje; kodu logoutu nie ma.
 7. Do zrobienia: CSP Report-Only i przegląd naruszeń.
 8. Do zrobienia: przeniesienie tras konta klienta na tę samą sesję. Bez drugiego ciasteczka.
 9. Do zrobienia: przeniesienie `mark-paid` i `cancel`, gdy mają być wołane z panelu.

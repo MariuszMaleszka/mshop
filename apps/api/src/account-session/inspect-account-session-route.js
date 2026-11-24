@@ -48,6 +48,9 @@ export async function handleInspectAccountSession(request, dependencies = {}) {
       database: dependencies.database,
       sessionHash: parsed.data.sessionHash,
       key: dependencies.sessionTokenKey,
+      rateLimitKey: dependencies.rateLimitHmacKey,
+      supabaseUrl: dependencies.supabaseUrl,
+      anonKey: dependencies.supabaseAnonKey,
     })
 
     if (result?.status === 'ready') {
@@ -56,6 +59,10 @@ export async function handleInspectAccountSession(request, dependencies = {}) {
 
     if (result?.status === 'pending') {
       return failure(503, 'session_pending')
+    }
+
+    if (result?.status === 'rate_limited') {
+      return failure(429, 'rate_limited')
     }
 
     if (INVALID_SESSION.has(result?.status)) {

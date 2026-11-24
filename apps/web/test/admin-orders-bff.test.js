@@ -186,6 +186,7 @@ describe('admin order BFF routes', () => {
   it('stops before the order request when inspection is not ready', async () => {
     const cases = [
       [401, { code: 'invalid_session' }, 401, 'UNAUTHORIZED'],
+      [429, { code: 'rate_limited' }, 429, 'RATE_LIMITED'],
       [503, { code: 'session_pending' }, 503, 'SERVICE_UNAVAILABLE'],
       [503, { code: 'service_unavailable' }, 503, 'SERVICE_UNAVAILABLE'],
     ]

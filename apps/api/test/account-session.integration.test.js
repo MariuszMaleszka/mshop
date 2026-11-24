@@ -4,6 +4,7 @@ import { after, describe, it } from 'node:test'
 import pg from 'pg'
 import {
   AccountSessionWriteError,
+  beginAccountSessionRefresh,
   consumeLoginChallenge,
   createReadyAccountSession,
   deleteAccountSession,
@@ -13,6 +14,8 @@ import {
   createLoginChallenge,
   createLoginChallengeValue,
   insertLoginChallenge,
+  markAccountSessionUnknown,
+  markStalePendingUnknown,
   saveRefreshedSession,
   sha256Hex,
 } from '../src/account-session/repository.js'
@@ -181,6 +184,109 @@ describe('account session storage', () => {
       }
     },
   )
+
+  it(
+    'begins a pending refresh and rejects a late or mismatched save',
+    { skip },
+    async () => {
+      const release = await holdIntegrationDatabase(databaseUrl)
+      const userId = await insertUser()
+
+      try {
+        const ready = sessionRow({ userId })
+        await insertAccountSession(database, ready)
+        const generation = randomUUID()
+        const started = await beginAccountSessionRefresh(database, {
+          idHash: ready.idHash,
+          generation,
+          refreshTokenHash: sha256Hex('refresh-token'),
+        })
+        assert.equal(started.csrf_token_hash, ready.csrfTokenHash)
+
+        const pending = await findAccountSession(database, ready.idHash)
+        assert.equal(pending.refresh_state, 'pending')
+        assert.equal(pending.refresh_generation, generation)
+
+        await database.query(
+          `
+            update public.account_sessions
+            set refresh_started_at = now() - interval '20 seconds'
+            where id_hash = $1
+          `,
+          [ready.idHash],
+        )
+
+        const late = await saveRefreshedSession(database, {
+          idHash: ready.idHash,
+          generation,
+          session: {
+            keyVersion: 1,
+            accessCiphertext: ready.accessCiphertext,
+            accessNonce: ready.accessNonce,
+            accessTag: ready.accessTag,
+            refreshCiphertext: ready.refreshCiphertext,
+            refreshNonce: ready.refreshNonce,
+            refreshTag: ready.refreshTag,
+            csrfTokenHash: ready.csrfTokenHash,
+          },
+        })
+        assert.equal(late, 0)
+
+        const cleared = await markAccountSessionUnknown(database, {
+          idHash: ready.idHash,
+          generation,
+        })
+        assert.equal(cleared, 1)
+        const unknown = await findAccountSession(database, ready.idHash)
+        assert.equal(unknown.refresh_state, 'unknown')
+        assert.equal(unknown.access_ciphertext, null)
+        assert.equal(unknown.refresh_ciphertext, null)
+      } finally {
+        await release()
+      }
+    },
+  )
+
+  it('marks only stale pending rows as unknown', { skip }, async () => {
+    const release = await holdIntegrationDatabase(databaseUrl)
+    const userId = await insertUser()
+
+    try {
+      const fresh = sessionRow({
+        userId,
+        refreshState: 'pending',
+        refreshGeneration: randomUUID(),
+        refreshStartedAt: new Date(),
+        refreshTokenHash: sha256Hex('fresh-refresh'),
+      })
+      const stale = sessionRow({
+        userId,
+        refreshState: 'pending',
+        refreshGeneration: randomUUID(),
+        refreshStartedAt: new Date(Date.now() - 20_000),
+        refreshTokenHash: sha256Hex('stale-refresh'),
+      })
+      await insertAccountSession(database, fresh)
+      await insertAccountSession(database, stale)
+
+      assert.equal(
+        await markStalePendingUnknown(database, { idHash: fresh.idHash }),
+        0,
+      )
+      assert.equal(
+        await markStalePendingUnknown(database, { idHash: stale.idHash }),
+        1,
+      )
+
+      const freshRow = await findAccountSession(database, fresh.idHash)
+      const staleRow = await findAccountSession(database, stale.idHash)
+      assert.equal(freshRow.refresh_state, 'pending')
+      assert.equal(staleRow.refresh_state, 'unknown')
+      assert.equal(staleRow.access_ciphertext, null)
+    } finally {
+      await release()
+    }
+  })
 
   it(
     'does not save tokens when the refresh generation differs',

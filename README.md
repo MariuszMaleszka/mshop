@@ -26,7 +26,7 @@ Wymagane: Node.js `>=22.22.3` i pnpm `10.34.9`. Zmienne są w `.env.example`. Ni
 4. `pnpm dev` uruchamia równolegle Nuxt na porcie 3000 i Express na porcie 3001.
 5. Sprawdzenie: `pnpm test`, `pnpm lint`, `pnpm build`. Test stron Nuxt jest osobno: `pnpm --filter @shop/web test:nuxt`. CI go nie uruchamia.
 
-Logowanie hasłem wymaga `SESSION_TOKEN_KEY`, `RATE_LIMIT_HMAC_KEY`, `BFF_INTERNAL_SECRET` i niepustego `BFF_TRUSTED_PEERS`. Lokalnie peer to `127.0.0.1,::1`. Ten sam sekret Nuxt czyta jako `NUXT_BFF_INTERNAL_SECRET`. Pusta lista peerów odrzuca wywołania wewnętrzne. Produkcyjny hosting, proxy, backup i monitoring nie są opisane w repozytorium i blokują wdrożenie. Szczegóły sesji są w `docs/AUTH-SESSION.md`.
+Logowanie hasłem i odświeżenie access tokenu przy inspect wymagają `SUPABASE_ANON_KEY`, `SESSION_TOKEN_KEY`, `RATE_LIMIT_HMAC_KEY`, `BFF_INTERNAL_SECRET` i niepustego `BFF_TRUSTED_PEERS`. Lokalnie peer to `127.0.0.1,::1`. Ten sam sekret Nuxt czyta jako `NUXT_BFF_INTERNAL_SECRET`. Pusta lista peerów odrzuca wywołania wewnętrzne. Wylogowania i middleware ochrony stron jeszcze nie ma. Produkcyjny hosting, proxy, backup i monitoring nie są opisane w repozytorium i blokują wdrożenie. Szczegóły sesji: `docs/AUTH-SESSION.md`. Wznowienie po przerwie: `docs/PROJECT_HANDOFF.md`.
 
 ## Jak używać dokumentacji
 

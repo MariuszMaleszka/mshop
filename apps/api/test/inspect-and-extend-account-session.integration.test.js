@@ -11,9 +11,9 @@ import { encryptToken } from '../src/account-session/token-cipher.js'
 import { createDatabase } from '../src/db/pool.js'
 import { createLogger } from '../src/http/logger.js'
 import { holdIntegrationDatabase } from './integration-lock.js'
+import { futureAccessToken } from './helpers/test-jwt.js'
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1'])
-const accessToken = 'coordinated-access-token'
 const refreshToken = 'coordinated-refresh-token'
 
 function localDatabaseUrl() {
@@ -73,12 +73,14 @@ const key = randomBytes(32)
 const userIds = []
 
 function sessionRow(userId, overrides = {}) {
+  const accessToken = futureAccessToken(3600, { sub: userId })
   const access = encryptToken(accessToken, key)
   const refresh = encryptToken(refreshToken, key)
 
   return {
     idHash: sha256Hex(randomUUID()),
     userId,
+    accessToken,
     refreshState: 'ready',
     keyVersion: access.version,
     accessCiphertext: access.ciphertext,
@@ -177,7 +179,7 @@ describe('inspect and extend account session storage', () => {
         assert.deepEqual(extended, {
           status: 'ready',
           userId,
-          accessToken,
+          accessToken: ready.accessToken,
           refreshToken,
           keyVersion: 1,
         })

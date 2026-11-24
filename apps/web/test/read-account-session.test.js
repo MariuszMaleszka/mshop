@@ -203,6 +203,7 @@ describe('read account session', () => {
   it('maps session failures without returning tokens', async () => {
     const cases = [
       [401, { code: 'invalid_session' }, 'invalid_session'],
+      [429, { code: 'rate_limited' }, 'rate_limited'],
       [503, { code: 'session_pending' }, 'session_pending'],
       [503, { code: 'service_unavailable' }, 'service_unavailable'],
     ]

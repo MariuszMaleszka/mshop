@@ -89,6 +89,10 @@ async function mapInspectResponse(response) {
     return failure('invalid_session')
   }
 
+  if (response.status === 429 && exactCode(body, 'rate_limited')) {
+    return failure('rate_limited')
+  }
+
   if (response.status === 503 && exactCode(body, 'session_pending')) {
     return failure('session_pending')
   }

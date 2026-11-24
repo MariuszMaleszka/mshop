@@ -19,6 +19,18 @@ Ten plik opisuje to, co da się uruchomić z repozytorium. Nie nadaje statusu �
 
 Playwright, jsdom i testy przeglądarkowe nie są zależnościami. Nie ma testów E2E.
 
+## Ostatnie raportowane liczby
+
+Z raportu Stage 3F.2 (24 listopada 2026), bez ponownego uruchomienia w etapie DOCS.2:
+
+| Zestaw | Wynik |
+| --- | --- |
+| API (`@shop/api`) | 488 pass |
+| Web Node (`@shop/web` `pnpm test`) | 93 pass |
+| Nuxt (`pnpm --filter @shop/web test:nuxt`) | 21 pass |
+
+Traktuj te liczby jako ostatni raportowany wynik, nie jako świeżo zweryfikowany pomiar z tego etapu dokumentacji.
+
 ## Co jest pokryte
 
 `node:test` woła funkcje i trasy z podstawionymi zależnościami. Część plików `*.integration.test.js` w `apps/api` łączy się z PostgreSQL na `127.0.0.1:54322` i używa blokady doradczej. Gdy baza nie działa, wynik zależy od danego pliku. Nie uruchamiaj `supabase db reset` ani `db push`, żeby te testy przeszły.
@@ -28,28 +40,34 @@ Pokryte obszary, bez listy każdego pliku:
 - katalog, koszyk gościa i konta, scalanie, checkout, kwoty, rezerwacje i ich wygaszanie;
 - webhook Przelewy24 i rekonsyliacja stanów nierozstrzygniętych w testach jednostkowych;
 - JWT, `requireAuth`, `requireAdmin`;
-- sesja gościa, CSRF, logowanie wewnętrzne, odczyt sesji, przedłużenie bezczynności;
-- odczyt administracyjny Expressa oraz BFF Nuxt, w tym izolacja dwóch równoległych sesji na poziomie loadera;
-- mapowanie statusów widoku zamówień bez renderowania Vue.
+- sesja gościa, CSRF, logowanie wewnętrzne i klienta BFF, strona `/login` w Vitest;
+- odczyt sesji, przedłużenie bezczynności oraz odświeżenie access tokenu (`refreshAccountSession`, `refreshSupabaseSession`, `saveRefreshedSession`);
+- równoległy refresh z barierą asynchroniczną, spóźniona odpowiedź po 15 s, niezgodna `refresh_generation`, brak INSERT, brak przedłużenia idle/absolute po nieudanym refresh, brak sekretów w odpowiedziach;
+- odczyt administracyjny Expressa oraz BFF Nuxt, w tym izolacja dwóch równoległych sesji i mapowanie 429 `rate_limited`;
+- mapowanie statusów widoku zamówień oraz zachowanie stron `/admin/orders` i `/admin/orders/:id` w Vitest.
 
 Test integracyjny logowania bywa wrażliwy na zderzenie losowego adresu w oknie 15 minut. Jedno powtórzenie nie jest dowodem błędu produktu. Nie zmieniaj tego testu przy okazji innego zadania.
 
 ## Vitest
 
-Jest jeden test: `apps/web/test/nuxt/admin-orders-page.test.js`. Montuje prawdziwy `orders.vue` przez `mountSuspended` i sprawdza, że setup przechodzi oraz że widać nagłówek „Zamówienia”. `fetch` jest zastąpiony lokalną odpowiedzią, więc Express nie jest potrzebny.
+Testy Nuxt są w `apps/web/test/nuxt/`:
 
-Ten test nie sprawdza:
+- `admin-orders-page.test.js` — prawdziwa `orders.vue`: ładowanie, sukces, 401/403/503, jedno żądanie po montowaniu, brak Bearer i sekretów;
+- `admin-order-detail-page.test.js` — prawdziwa `orders/[id].vue`: ładowanie, sukces, 401/403/404/503, zły UUID bez wywołania BFF;
+- `login-page.test.js` — prawdziwa `login.vue`: CSRF po mount, sukces i redirect, 401/403/429/503, awaria CSRF, blokada podwójnego submit, brak Bearer i sekretów w DOM/stanie komponentu.
 
-- HTML z SSR i braku danych zamówienia w pierwszym dokumencie;
-- braku żądania przed `onMounted` i dokładnie jednego żądania po montowaniu;
-- niepoprawnego UUID na stronie szczegółów;
-- komunikatów 401, 403, 404 i 503;
-- przejścia z listy do szczegółów;
-- `Cache-Control` dokumentu HTML. BFF ustawia `no-store` na JSON. Nagłówek dokumentu nie jest w kodzie ustawiony i nie został zmierzony.
+`fetch` jest zastępowany lokalnie. Express nie jest potrzebny.
+
+Te testy nie sprawdzają:
+
+- HTML z SSR dokumentu `/admin/orders` ani jego `Cache-Control`;
+- E2E w prawdziwej przeglądarce;
+- wyścigu logout × refresh (logout nie istnieje).
 
 ## Luki przed uznaniem ścieżki za zamkniętą
 
 - E2E: gość, checkout gotówkowy, logowanie, odczyt panelu, odmowa klienta bez roli `admin`.
-- Odświeżenie i wylogowanie, gdy powstaną: test wyścigu opisany w `docs/AUTH-SESSION.md` nadal nie istnieje.
-- Render strony szczegółów i nawigacja listy.
+- Wylogowanie oraz test wyścigu logout × refresh z `docs/AUTH-SESSION.md`.
+- Middleware ochrony stron i frontendowe RBAC.
+- Wywołanie `POST /api/v1/cart/merge` z Nuxt po zalogowaniu.
 - Testy produkcyjnego Przelewy24. Sandbox nie jest dowodem produkcji. Produkcyjny checkout online pozostaje wyłączony.
