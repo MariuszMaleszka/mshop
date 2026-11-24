@@ -44,6 +44,7 @@ export default [
         useApi: 'readonly',
         useHead: 'readonly',
         useRoute: 'readonly',
+        useRequestURL: 'readonly',
         definePageMeta: 'readonly',
         defineEventHandler: 'readonly',
         getRequestHeader: 'readonly',
@@ -52,6 +53,8 @@ export default [
         readBody: 'readonly',
         setResponseHeader: 'readonly',
         setResponseStatus: 'readonly',
+        getQuery: 'readonly',
+        getRouterParam: 'readonly',
       },
     },
     rules: {

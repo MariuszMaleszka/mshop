@@ -289,6 +289,36 @@ export async function deleteAccountSession(database, idHash) {
   return result.rowCount
 }
 
+export async function extendAccountSessionIdleExpiry(
+  database,
+  { idHash } = {},
+) {
+  if (typeof idHash !== 'string' || !SESSION_HASH.test(idHash)) {
+    throw new AccountSessionWriteError('rejected')
+  }
+
+  try {
+    const result = await database.query(
+      `
+        update public.account_sessions
+        set idle_expires_at = greatest(
+          idle_expires_at,
+          least(now() + interval '30 minutes', absolute_expires_at)
+        )
+        where id_hash = $1
+          and refresh_state = 'ready'
+          and absolute_expires_at > now()
+          and idle_expires_at > now()
+      `,
+      [idHash],
+    )
+
+    return result.rowCount
+  } catch (error) {
+    throw mapWriteError(error)
+  }
+}
+
 export async function createLoginChallenge(
   database,
   { challengeId, csrfSecret },

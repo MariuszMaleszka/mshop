@@ -4,12 +4,13 @@ import AppEmptyState from '../../../components/ui/AppEmptyState.vue'
 import AppErrorState from '../../../components/ui/AppErrorState.vue'
 import AppLoadingState from '../../../components/ui/AppLoadingState.vue'
 import AppStatusBadge from '../../../components/ui/AppStatusBadge.vue'
+import { requestAdminOrders } from '../../../modules/admin-orders/bff.js'
 import { readAdminOrder } from '../../../modules/admin-orders/view.js'
 
 definePageMeta({ layout: 'admin' })
 
 const route = useRoute()
-const api = useApi()
+const pageOrigin = useRequestURL().origin
 const view = ref({ state: 'loading' })
 const loading = ref(true)
 let active = true
@@ -34,7 +35,7 @@ async function load() {
     return
   }
 
-  const result = await api.request(`admin/orders/${orderId}`)
+  const result = await requestAdminOrders(pageOrigin, `admin/orders/${orderId}`)
 
   if (!active) {
     return

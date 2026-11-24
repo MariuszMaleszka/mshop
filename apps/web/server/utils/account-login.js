@@ -158,9 +158,15 @@ export async function loginAccount({
   }
 }
 
+export function accountSessionCookieName(nodeEnv) {
+  return nodeEnv === 'production'
+    ? PRODUCTION_SESSION_COOKIE
+    : LOCAL_SESSION_COOKIE
+}
+
 export function accountSessionCookie(nodeEnv, sessionId) {
   const production = nodeEnv === 'production'
-  const name = production ? PRODUCTION_SESSION_COOKIE : LOCAL_SESSION_COOKIE
+  const name = accountSessionCookieName(nodeEnv)
   const parsed = readCookieValue(`${name}=${sessionId}`, name)
 
   if (parsed.status !== 'present') {
@@ -200,9 +206,10 @@ function cookieOptions(production, maxAge) {
 }
 
 function readPreviousSessionHash(cookieHeader, nodeEnv) {
-  const name =
-    nodeEnv === 'production' ? PRODUCTION_SESSION_COOKIE : LOCAL_SESSION_COOKIE
-  const parsed = readCookieValue(cookieHeader, name)
+  const parsed = readCookieValue(
+    cookieHeader,
+    accountSessionCookieName(nodeEnv),
+  )
 
   if (parsed.status !== 'present') {
     return undefined

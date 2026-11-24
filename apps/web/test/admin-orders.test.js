@@ -125,6 +125,16 @@ describe('admin orders', () => {
     assert.equal(ready.rows[0].amount, '159,00 PLN')
     assert.equal(ready.rows[0].payment.label, 'Oczekuje')
     assert.equal(ready.rows[0].fulfillment.tone, 'info')
+    assert.equal(readAdminOrder({ status: 401 }).state, 'unauthorized')
+    assert.equal(readAdminOrder({ status: 403 }).state, 'forbidden')
+    assert.equal(readAdminOrder({ status: 404 }).state, 'missing')
+    assert.equal(
+      readAdminOrder({
+        status: 503,
+        error: { code: 'SERVICE_UNAVAILABLE', message: 'sql' },
+      }).state,
+      'error',
+    )
     assert.equal(
       readAdminOrder({
         status: 200,

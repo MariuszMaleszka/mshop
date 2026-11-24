@@ -24,11 +24,12 @@ import {
   paymentMethodLabel,
   paymentStatusView,
 } from '../../modules/admin-orders/labels.js'
+import { requestAdminOrders } from '../../modules/admin-orders/bff.js'
 import { readAdminOrders } from '../../modules/admin-orders/view.js'
 
 definePageMeta({ layout: 'admin' })
 
-const api = useApi()
+const pageOrigin = useRequestURL().origin
 const query = ref(createAdminOrdersQuery())
 const searchDraft = ref('')
 const view = ref({ state: 'loading' })
@@ -103,7 +104,10 @@ function onPage(event) {
 async function load() {
   const current = ++requestId
   loading.value = true
-  const result = await api.request(adminOrdersRequestPath(query.value))
+  const result = await requestAdminOrders(
+    pageOrigin,
+    adminOrdersRequestPath(query.value),
+  )
 
   if (!active || current !== requestId) {
     return
