@@ -45,6 +45,7 @@ export default [
         useHead: 'readonly',
         useRoute: 'readonly',
         useRequestURL: 'readonly',
+        navigateTo: 'readonly',
         definePageMeta: 'readonly',
         defineEventHandler: 'readonly',
         getRequestHeader: 'readonly',

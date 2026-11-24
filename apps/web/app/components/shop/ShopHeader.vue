@@ -11,6 +11,7 @@ const count = ref(null)
 const links = [
   { to: '/', label: 'Sklep' },
   { to: '/cart', label: 'Koszyk' },
+  { to: '/login', label: 'Zaloguj' },
 ]
 
 let active = true
