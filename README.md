@@ -18,15 +18,24 @@ Dokumentacja startowa dla modułowego sklepu internetowego:
 
 ## Uruchomienie lokalne
 
-Wymagane: Node.js `>=22.22.3` i pnpm `10.34.9`. Zmienne są w `.env.example`. Nie wklejaj tu prawdziwych sekretów i nie commituj pliku `.env`.
+Wymagane narzędzia (zgodnie z repozytorium):
 
-1. `pnpm install` w katalogu głównym.
-2. Lokalny PostgreSQL Supabase nasłuchuje na `127.0.0.1:54322`. Nowe migracje: `pnpm exec supabase migration up`. Nie używaj `db reset` ani `db push`.
-3. API nie czyta `.env` samo. Proces Express musi dostać zmienne, w tym `DATABASE_URL` i `SUPABASE_URL`.
-4. `pnpm dev` uruchamia równolegle Nuxt na porcie 3000 i Express na porcie 3001.
-5. Sprawdzenie: `pnpm test`, `pnpm lint`, `pnpm build`. Test stron Nuxt jest osobno: `pnpm --filter @shop/web test:nuxt`. CI go nie uruchamia.
+- Node.js: minimum `engines` w root `package.json` (`>=22.22.3`); CI i pin lokalny: `.nvmrc` (`22.23.5`)
+- pnpm: dokładnie `packageManager` w root `package.json` (`pnpm@10.34.9`)
 
-Logowanie hasłem i odświeżenie access tokenu przy inspect wymagają `SUPABASE_ANON_KEY`, `SESSION_TOKEN_KEY`, `RATE_LIMIT_HMAC_KEY`, `BFF_INTERNAL_SECRET` i niepustego `BFF_TRUSTED_PEERS`. Lokalnie peer to `127.0.0.1,::1`. Ten sam sekret Nuxt czyta jako `NUXT_BFF_INTERNAL_SECRET`. Pusta lista peerów odrzuca wywołania wewnętrzne. Wylogowania i middleware ochrony stron jeszcze nie ma. Produkcyjny hosting, proxy, backup i monitoring nie są opisane w repozytorium i blokują wdrożenie. Szczegóły sesji: `docs/AUTH-SESSION.md`. Wznowienie po przerwie: `docs/PROJECT_HANDOFF.md`.
+Nie wklejaj prawdziwych sekretów do dokumentacji i nie commituj pliku `.env`.
+
+1. Zainstaluj zależności w katalogu głównym: `pnpm install`.
+2. Uruchom lokalny Supabase (Docker): `pnpm exec supabase start`. Porty z `supabase/config.toml`: API Auth `127.0.0.1:54321`, PostgreSQL `127.0.0.1:54322`. Klucz anon i inne wartości lokalne: `pnpm exec supabase status -o env` (albo bez `-o env`).
+3. Zastosuj migracje: `pnpm exec supabase migration up`. Nie używaj `db reset` ani `db push` bez jawnej zgody.
+4. Przygotuj zmienne z `.env.example` (skopiuj do lokalnego `.env` tylko jako prywatną listę — plik jest w `.gitignore`). Uzupełnij co najmniej to, czego wymaga start API i logowanie: `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SESSION_TOKEN_KEY`, `RATE_LIMIT_HMAC_KEY`, `BFF_INTERNAL_SECRET`, `NUXT_BFF_INTERNAL_SECRET` (ta sama wartość co `BFF_INTERNAL_SECRET`) oraz lokalnie `BFF_TRUSTED_PEERS=127.0.0.1,::1`. Generowanie kluczy 32 B base64 jest opisane w `.env.example`.
+5. Express **nie** ładuje pliku `.env`. Przed `pnpm dev` ustaw wymagane zmienne w środowisku procesu powłoki (PowerShell: `$env:NAME='...'`; bash: `export NAME=...`) albo w konfiguracji IDE, która startuje to samo `pnpm dev`. Oba procesy z `pnpm --parallel --filter './apps/*' dev` dziedziczą env rodzica. Projekt nie ma skryptu ani zależności do automatycznego wczytania `.env` do API.
+6. Uruchom aplikację: `pnpm dev` — Nuxt `:3000`, Express `:3001` (`PORT` domyślnie 3001).
+7. Sprawdzenie środowiska: `GET http://127.0.0.1:3001/api/v1/health` oraz `GET http://127.0.0.1:3001/api/v1/health/ready`; sklep na `http://127.0.0.1:3000`. Logowanie: strona `/login` (wymaga kompletnych zmiennych z punktu 4). Wylogowania i middleware ochrony stron jeszcze nie ma.
+
+Dodatkowe sprawdzenia jakości: `pnpm test`, `pnpm lint`, `pnpm build`. Test stron Nuxt: `pnpm --filter @shop/web test:nuxt` (poza CI).
+
+Produkcyjny hosting, proxy, backup i monitoring nie są opisane w repozytorium i blokują wdrożenie. Szczegóły sesji: `docs/AUTH-SESSION.md`. Wznowienie po przerwie: `docs/PROJECT_HANDOFF.md`.
 
 ## Jak używać dokumentacji
 

@@ -202,7 +202,7 @@ Gdy `INSERT` się uda, a Nuxt nie ustawi ciasteczka, Nuxt woła skasowanie tego 
 
 ## 12. Limity
 
-Publiczne logowanie i bootstrap CSRF są za limiterem. Przy awarii limitera Supabase nie jest wołane. Licznik odświeżenia jest w bazie i w funkcji `consumeRefreshRateLimit`. Żadna trasa go nie woła, bo odświeżenia tokenu nie ma.
+Publiczne logowanie i bootstrap CSRF są za limiterem. Przy awarii limitera Supabase nie jest wołane. Licznik odświeżenia jest w bazie i w funkcji `consumeRefreshRateLimit`. Woła go `refreshAccountSession` na początku odświeżenia access tokenu, przed Auth.
 
 Stan liczników jest w PostgreSQL, wspólny dla instancji. W tabeli leży HMAC-SHA-256, nie adres, e-mail ani identyfikator sesji. Klucz HMAC to osobna zmienna `RATE_LIMIT_HMAC_KEY`, 32 bajty w standardowym base64. Nie jest to `SESSION_TOKEN_KEY` i nie wchodzi do publicznej konfiguracji Nuxt. Pusta wartość nie zatrzymuje API. Wywołanie limitera bez poprawnego klucza kończy się błędem i nie oznacza zgody.
 
